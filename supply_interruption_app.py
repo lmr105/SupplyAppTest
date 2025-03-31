@@ -106,27 +106,28 @@ def highlight_row_with_index(row, raw_durations):
 def generate_excel_file(results_df):
     """
     Generate an Excel file (raw data) in memory with conditional formatting.
-    The DataFrame is expected to contain an "Outage Duration" column (to be displayed)
+    The DataFrame is expected to contain an "Outage Duration" column (which will be formatted)
     and a "Raw Duration" column (hidden) used for internal calculations.
     """
     df_excel = results_df.copy()
-    df_excel['Raw Duration (seconds)'] = df_excel['Raw Duration'].apply(
-        lambda x: x.total_seconds() if pd.notnull(x) else None
-    )
+    # Convert "Outage Duration" from timedelta to formatted string.
+    df_excel['Outage Duration'] = df_excel['Outage Duration'].apply(lambda x: format_timedelta(x) if pd.notnull(x) and isinstance(x, timedelta) else x)
+    # Create a hidden column for internal use.
+    df_excel['Raw Duration (seconds)'] = df_excel['Raw Duration'].apply(lambda x: x.total_seconds() if pd.notnull(x) else None)
     df_excel = df_excel.drop(columns=["Raw Duration"])
-
+    
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_excel.to_excel(writer, index=False, sheet_name='Results')
         workbook = writer.book
         worksheet = writer.sheets['Results']
-
+        
         num_rows = df_excel.shape[0] + 1  # header + data rows
         num_cols = df_excel.shape[1]
-
+        
         raw_col_index = df_excel.columns.get_loc("Raw Duration (seconds)")
         worksheet.set_column(raw_col_index, raw_col_index, None, None, {'hidden': True})
-
+        
         highlight_format = workbook.add_format({'bg_color': '#FFFF00'})
         raw_col_letter = xl_col_to_name(raw_col_index)
         visible_range = f"A2:{xl_col_to_name(num_cols - 1)}{num_rows}"
@@ -143,15 +144,18 @@ def generate_processed_excel_file(processed_df):
     Generate an Excel file (processed data) in memory.
     The processed DataFrame contains:
       Property Height (m), Total Properties, Lost Supply, Regained Supply, 
-      Duration (formatted as HH:MM:SS), and CML Impact.
-    A total row is added summing the CML Impact under "Total Impact".
+      Duration (formatted as HH:MM:SS), CML Impact, and Cost.
+    A total row is added summing the CML Impact and Cost.
     """
+    # Calculate CML Impact for each row.
     def calc_cml(row):
         # Outage duration in hours:
         hours = row['Duration'].total_seconds() / 3600
         return ((hours * row['Total Properties']) / 1473786) * 60
-
     processed_df['CML Impact'] = processed_df.apply(lambda row: calc_cml(row) if pd.notnull(row['Duration']) else 0, axis=1)
+    # Calculate Cost as CML Impact multiplied by 61000.
+    processed_df['Cost'] = processed_df['CML Impact'] * 61000
+    # Format Duration as string.
     processed_df['Duration'] = processed_df['Duration'].apply(lambda x: format_timedelta(x) if pd.notnull(x) and isinstance(x, timedelta) else "")
     
     output = io.BytesIO()
@@ -162,10 +166,17 @@ def generate_processed_excel_file(processed_df):
         
         num_rows = processed_df.shape[0] + 1  # including header
         cml_col_index = processed_df.columns.get_loc("CML Impact")
+        cost_col_index = processed_df.columns.get_loc("Cost")
         cml_col_letter = xl_col_to_name(cml_col_index)
+        cost_col_letter = xl_col_to_name(cost_col_index)
+        
         worksheet.write(num_rows, 0, "Total Impact")
-        sum_range = f"{cml_col_letter}2:{cml_col_letter}{num_rows}"
-        worksheet.write_formula(num_rows, cml_col_index, f"=SUM({sum_range})")
+        sum_range_cml = f"{cml_col_letter}2:{cml_col_letter}{num_rows}"
+        worksheet.write_formula(num_rows, cml_col_index, f"=SUM({sum_range_cml})")
+        
+        worksheet.write(num_rows, cost_col_index, "Total Cost")
+        sum_range_cost = f"{cost_col_letter}2:{cost_col_letter}{num_rows}"
+        worksheet.write_formula(num_rows, cost_col_index, f"=SUM({sum_range_cost})")
     return output.getvalue()
 
 def process_outages(result_rows):
@@ -320,8 +331,9 @@ with st.container():
                         })
 
             results_df = pd.DataFrame(result_rows)
+            # Format the "Outage Duration" column to a string for display/export.
+            results_df['Outage Duration'] = results_df['Outage Duration'].apply(lambda x: format_timedelta(x) if pd.notnull(x) and isinstance(x, timedelta) else x)
             raw_durations = results_df['Raw Duration']
-            # Prepare the raw data Excel file.
             raw_excel = generate_excel_file(results_df)
             st.download_button(
                 label="Download Raw Data as Excel (.xlsx)",
