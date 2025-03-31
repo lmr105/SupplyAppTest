@@ -5,6 +5,44 @@ from datetime import datetime, timedelta
 from xlsxwriter.utility import xl_col_to_name
 
 # --------------------
+# Set Page Configuration
+# --------------------
+st.set_page_config(
+    page_title="Water Supply Interruption Calculator",
+    page_icon="💧",
+    layout="wide"
+)
+
+# --------------------
+# Custom CSS for Styling
+# --------------------
+st.markdown(
+    """
+    <style>
+    body { font-family: 'Arial', sans-serif; background-color: #f7f7f7; }
+    .main-container { 
+        background-color: #ffffff; 
+        padding: 2rem; 
+        border-radius: 10px; 
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1); 
+        margin: 2rem auto; 
+        max-width: 1200px; 
+    }
+    .stTextArea textarea { background-color: #e8f0fe; }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# --------------------
+# Display Centered Logo
+# --------------------
+st.markdown(
+    "<div style='text-align: center;'><img src='https://via.placeholder.com/800x150.png?text=Water+Supply+Interruption+Calculator' width='400'></div>",
+    unsafe_allow_html=True
+)
+
+# --------------------
 # Helper Functions
 # --------------------
 
@@ -103,17 +141,16 @@ def generate_processed_excel_file(processed_df):
     """
     Generate an Excel file (processed data) in memory.
     The processed data contains only the combined outage events that meet the rule.
-    Columns: Property Height (m), Total Properties, Lost Supply, Regained Supply, Duration (formatted as HH:MM:SS), CML Impact.
+    Columns: Property Height (m), Total Properties, Lost Supply, Regained Supply, 
+             Duration (formatted as HH:MM:SS), CML Impact.
     A total row is added summing the CML Impact as "Total Impact".
     """
-    # Calculate CML Impact for each row.
     def calc_cml(row):
-        # Outage duration in hours:
+        # Outage duration in hours.
         hours = row['Duration'].total_seconds() / 3600
         return ((hours * row['Total Properties']) / 1473786) * 60
 
     processed_df['CML Impact'] = processed_df.apply(lambda row: calc_cml(row) if pd.notnull(row['Duration']) else 0, axis=1)
-    # Format Duration as string.
     processed_df['Duration'] = processed_df['Duration'].apply(lambda x: format_timedelta(x) if pd.notnull(x) and isinstance(x, timedelta) else "")
     
     output = io.BytesIO()
@@ -122,7 +159,6 @@ def generate_processed_excel_file(processed_df):
         workbook = writer.book
         worksheet = writer.sheets['Processed Results']
         
-        # Add a total row for CML Impact at the bottom.
         num_rows = processed_df.shape[0] + 1  # including header
         cml_col_index = processed_df.columns.get_loc("CML Impact")
         cml_col_letter = xl_col_to_name(cml_col_index)
@@ -185,84 +221,11 @@ def process_outages(result_rows):
     processed_sorted = sorted(processed, key=lambda x: x["Property Height (m)"], reverse=True)
     return processed_sorted
 
-def compute_quick_table(pressure_df, logger_height, additional_headloss, unique_heights, total_props):
-    """
-    Computes a quick supply status table.
-    For each property height, determines if it is in supply at the last timestamp.
-    If out of supply, calculates how long it has been out based on the most recent in-supply timestamp.
-    Also computes CML Impact using the formula:
-       ((Outage Duration in hours * Total Properties) / 1473786)*60.
-    Returns a DataFrame with columns: 
-      Property Height (m), Total Properties, Supply Status, Outage Duration, and CML Impact.
-    """
-    modified_pressure = pressure_df['Pressure'] - additional_headloss
-    effective_supply_head = logger_height + (modified_pressure - 3)
-    last_time = pressure_df['Datetime'].iloc[-1]
-    first_time = pressure_df['Datetime'].iloc[0]
-    rows = []
-    for h in unique_heights:
-        total_prop = total_props.get(h, 1)
-        if h <= logger_height:
-            condition = modified_pressure > 0
-        else:
-            condition = effective_supply_head > h
-        
-        # Instead of simply taking the last value, search backwards for the most recent True.
-        if condition.iloc[-1]:
-            supply_status = "In Supply"
-            outage_duration_str = ""
-            cml_impact = 0
-        else:
-            # Reverse the condition series.
-            reversed_condition = condition[::-1]
-            true_indices = reversed_condition[reversed_condition].index
-            if not true_indices.empty:
-                last_in_supply = pressure_df['Datetime'].loc[true_indices[0]]
-                outage_duration = last_time - last_in_supply
-            else:
-                outage_duration = last_time - first_time
-            supply_status = "Out of Supply"
-            outage_duration_str = format_timedelta(outage_duration)
-            outage_hours = outage_duration.total_seconds() / 3600
-            cml_impact = ((outage_hours * total_prop) / 1473786) * 60
-        rows.append({
-            "Property Height (m)": h,
-            "Total Properties": total_prop,
-            "Supply Status": supply_status,
-            "Outage Duration": outage_duration_str,
-            "CML Impact": cml_impact
-        })
-    return pd.DataFrame(rows)
-
 # --------------------
 # Main UI & Processing (Review Mode)
 # --------------------
-st.set_page_config(
-    page_title="Water Supply Interruption Calculator",
-    page_icon="💧",
-    layout="wide"
-)
-
-# Custom CSS for improved styling.
-st.markdown(
-    """
-    <style>
-    body { font-family: 'Arial', sans-serif; background-color: #f7f7f7; }
-    .main-container { background-color: #ffffff; padding: 2rem; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin: 2rem auto; max-width: 1200px; }
-    .stTextArea textarea { background-color: #e8f0fe; }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-# Centered, resized logo.
-st.markdown(
-    "<div style='text-align: center;'><img src='https://www.dwrcymru.com/-/media/project/images/brand/logo/dcww-logo-colour-x2.ashx?h=36&w=140&la=en&hash=1FC5F218FEA70D80F68EA05374493D16' width='400'></div>",
-    unsafe_allow_html=True
-)
-
 with st.container():
-    st.title("Supply Interruption Analysis")
+    st.title("Review Mode - Supply Interruption Analysis")
     st.markdown("""
     **Instructions:**
 
@@ -274,7 +237,7 @@ with st.container():
        - Copy the column of property heights and paste it into the **Property Heights** box.
     3. Enter the height of the pressure logger.
     4. Enter the simulated additional headloss (in meters) to deduct from the pressure readings.
-    5. Click **Run Analysis** for full downloadable results or **Quick Table** for a quick on‑screen summary.
+    5. Click **Run Analysis** to perform the full analysis (downloadable results).
     """)
 
     col1, col2, col3 = st.columns(3)
@@ -288,7 +251,6 @@ with st.container():
     logger_height = st.number_input("Enter the height of the pressure logger (in meters):", min_value=0.0, value=100.0)
     additional_headloss = st.number_input("Simulate additional headloss (in meters):", min_value=0.0, value=0.0, step=0.1)
 
-    # Full Analysis Button
     if st.button("Run Analysis"):
         if pressure_timestamps_text and pressure_readings_text and property_heights_text:
             timestamps_list = [line.strip() for line in pressure_timestamps_text.splitlines() if line.strip()]
@@ -341,7 +303,6 @@ with st.container():
                         if intr['duration'] is None:
                             continue
                         duration_td = intr['duration']
-                        # Store the raw duration as a timedelta for further processing.
                         if i > 0:
                             restoration_td = intr['lost_time'] - interruptions[i-1]['regained_time']
                             formatted_restoration = format_timedelta(restoration_td)
@@ -359,7 +320,7 @@ with st.container():
 
             results_df = pd.DataFrame(result_rows)
             raw_durations = results_df['Raw Duration']
-            results_df_display = results_df.drop(columns=["Raw Duration"])
+            # Prepare the raw data Excel file.
             raw_excel = generate_excel_file(results_df)
             st.download_button(
                 label="Download Raw Data as Excel (.xlsx)",
@@ -381,41 +342,5 @@ with st.container():
                 )
             else:
                 st.info("No processed outage events meet the criteria for being truly out of supply.")
-        else:
-            st.error("Please provide data in all text areas.")
-
-    # Quick Table Functionality
-    if st.button("Quick Table"):
-        if pressure_timestamps_text and pressure_readings_text and property_heights_text:
-            timestamps_list = [line.strip() for line in pressure_timestamps_text.splitlines() if line.strip()]
-            pressure_list = [line.strip() for line in pressure_readings_text.splitlines() if line.strip()]
-            heights_list = [line.strip() for line in property_heights_text.splitlines() if line.strip()]
-            try:
-                pressure_df = pd.DataFrame({
-                    'Datetime': [pd.to_datetime(ts, format="%d/%m/%Y %H:%M") for ts in timestamps_list],
-                    'Pressure': [float(p) for p in pressure_list]
-                })
-            except Exception as e:
-                st.error(f"Error parsing pressure data: {e}")
-                st.stop()
-            try:
-                heights_df = pd.DataFrame({
-                    'Property_Height': [float(h) for h in heights_list]
-                })
-            except Exception as e:
-                st.error(f"Error parsing property heights: {e}")
-                st.stop()
-
-            pressure_df['Modified_Pressure'] = pressure_df['Pressure'] - additional_headloss
-            pressure_df['Effective_Supply_Head'] = logger_height + (pressure_df['Modified_Pressure'] - 3)
-            grouped = heights_df.groupby('Property_Height').size().reset_index(name='Total Properties')
-            total_props = dict(zip(grouped['Property_Height'], grouped['Total Properties']))
-            unique_heights = sorted(heights_df['Property_Height'].unique())
-
-            quick_df = compute_quick_table(pressure_df, logger_height, additional_headloss, unique_heights, total_props)
-            st.markdown("### Quick Supply Status Table")
-            st.dataframe(quick_df)
-            total_impact = quick_df['CML Impact'].sum()
-            st.markdown(f"**Total Impact: {total_impact:.6f}**")
         else:
             st.error("Please provide data in all text areas.")
