@@ -106,7 +106,8 @@ def highlight_row_with_index(row, raw_durations):
 def generate_excel_file(results_df):
     """
     Generate an Excel file (raw data) in memory with conditional formatting.
-    Uses a hidden column (Raw Duration in seconds) to highlight rows with outages ≥ 3 hours.
+    The DataFrame is expected to contain an "Outage Duration" column (to be displayed)
+    and a "Raw Duration" column (hidden) used for internal calculations.
     """
     df_excel = results_df.copy()
     df_excel['Raw Duration (seconds)'] = df_excel['Raw Duration'].apply(
@@ -140,13 +141,13 @@ def generate_excel_file(results_df):
 def generate_processed_excel_file(processed_df):
     """
     Generate an Excel file (processed data) in memory.
-    The processed data contains only the combined outage events that meet the rule.
-    Columns: Property Height (m), Total Properties, Lost Supply, Regained Supply, 
-             Duration (formatted as HH:MM:SS), CML Impact.
-    A total row is added summing the CML Impact as "Total Impact".
+    The processed DataFrame contains:
+      Property Height (m), Total Properties, Lost Supply, Regained Supply, 
+      Duration (formatted as HH:MM:SS), and CML Impact.
+    A total row is added summing the CML Impact under "Total Impact".
     """
     def calc_cml(row):
-        # Outage duration in hours.
+        # Outage duration in hours:
         hours = row['Duration'].total_seconds() / 3600
         return ((hours * row['Total Properties']) / 1473786) * 60
 
@@ -294,7 +295,7 @@ with st.container():
                         'Total Properties': total_properties,
                         'Lost Supply': "In supply all times",
                         'Regained Supply': "",
-                        'Duration': "",
+                        'Outage Duration': "",
                         'Restoration Duration': "",
                         'Raw Duration': None
                     })
@@ -313,7 +314,7 @@ with st.container():
                             'Total Properties': total_properties,
                             'Lost Supply': intr['lost_time'],
                             'Regained Supply': intr['regained_time'],
-                            'Duration': duration_td,
+                            'Outage Duration': duration_td,
                             'Restoration Duration': formatted_restoration,
                             'Raw Duration': duration_td
                         })
