@@ -106,13 +106,12 @@ def highlight_row_with_index(row, raw_durations):
 def generate_excel_file(results_df):
     """
     Generate an Excel file (raw data) in memory with conditional formatting.
-    The DataFrame is expected to contain an "Outage Duration" column (which will be formatted)
+    The DataFrame is expected to contain an "Outage Duration" column (which is formatted as HH:MM:SS)
     and a "Raw Duration" column (hidden) used for internal calculations.
     """
     df_excel = results_df.copy()
-    # Convert "Outage Duration" from timedelta to formatted string.
+    # Ensure "Outage Duration" is a formatted string.
     df_excel['Outage Duration'] = df_excel['Outage Duration'].apply(lambda x: format_timedelta(x) if pd.notnull(x) and isinstance(x, timedelta) else x)
-    # Create a hidden column for internal use.
     df_excel['Raw Duration (seconds)'] = df_excel['Raw Duration'].apply(lambda x: x.total_seconds() if pd.notnull(x) else None)
     df_excel = df_excel.drop(columns=["Raw Duration"])
     
@@ -144,19 +143,19 @@ def generate_processed_excel_file(processed_df):
     Generate an Excel file (processed data) in memory.
     The processed DataFrame contains:
       Property Height (m), Total Properties, Lost Supply, Regained Supply, 
-      Duration (formatted as HH:MM:SS), CML Impact, and Cost.
+      Outage Duration (HH:MM:SS), CML Impact, and Cost.
     A total row is added summing the CML Impact and Cost.
     """
-    # Calculate CML Impact for each row.
     def calc_cml(row):
-        # Outage duration in hours:
-        hours = row['Duration'].total_seconds() / 3600
+        hours = row['Outage Duration (raw)'].total_seconds() / 3600
         return ((hours * row['Total Properties']) / 1473786) * 60
-    processed_df['CML Impact'] = processed_df.apply(lambda row: calc_cml(row) if pd.notnull(row['Duration']) else 0, axis=1)
-    # Calculate Cost as CML Impact multiplied by 61000.
+    processed_df['CML Impact'] = processed_df.apply(lambda row: calc_cml(row) if pd.notnull(row['Outage Duration (raw)']) else 0, axis=1)
     processed_df['Cost'] = processed_df['CML Impact'] * 61000
-    # Format Duration as string.
-    processed_df['Duration'] = processed_df['Duration'].apply(lambda x: format_timedelta(x) if pd.notnull(x) and isinstance(x, timedelta) else "")
+    # Format Outage Duration as string.
+    processed_df['Outage Duration'] = processed_df['Outage Duration (raw)'].apply(lambda x: format_timedelta(x) if pd.notnull(x) and isinstance(x, timedelta) else "")
+    
+    # Drop the raw duration column used for processing.
+    processed_df = processed_df.drop(columns=["Outage Duration (raw)"])
     
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -165,15 +164,17 @@ def generate_processed_excel_file(processed_df):
         worksheet = writer.sheets['Processed Results']
         
         num_rows = processed_df.shape[0] + 1  # including header
-        cml_col_index = processed_df.columns.get_loc("CML Impact")
-        cost_col_index = processed_df.columns.get_loc("Cost")
-        cml_col_letter = xl_col_to_name(cml_col_index)
-        cost_col_letter = xl_col_to_name(cost_col_index)
         
+        # Sum CML Impact.
+        cml_col_index = processed_df.columns.get_loc("CML Impact")
+        cml_col_letter = xl_col_to_name(cml_col_index)
         worksheet.write(num_rows, 0, "Total Impact")
         sum_range_cml = f"{cml_col_letter}2:{cml_col_letter}{num_rows}"
         worksheet.write_formula(num_rows, cml_col_index, f"=SUM({sum_range_cml})")
         
+        # Sum Cost.
+        cost_col_index = processed_df.columns.get_loc("Cost")
+        cost_col_letter = xl_col_to_name(cost_col_index)
         worksheet.write(num_rows, cost_col_index, "Total Cost")
         sum_range_cost = f"{cost_col_letter}2:{cost_col_letter}{num_rows}"
         worksheet.write_formula(num_rows, cost_col_index, f"=SUM({sum_range_cost})")
@@ -185,7 +186,7 @@ def process_outages(result_rows):
     by a restoration period of less than one hour. For each property (by height),
     if the combined outage duration is 3 hours or more, include it in the output.
     Returns a list of dicts with keys: 
-      Property Height (m), Total Properties, Lost Supply, Regained Supply, Duration (timedelta).
+      Property Height (m), Total Properties, Lost Supply, Regained Supply, Outage Duration (raw, as timedelta).
     """
     processed = []
     from collections import defaultdict
@@ -215,7 +216,7 @@ def process_outages(result_rows):
                             "Total Properties": events[0]["Total Properties"],
                             "Lost Supply": current_event["Lost Supply"],
                             "Regained Supply": current_event["Regained Supply"],
-                            "Duration": current_event["Cumulative Duration"]
+                            "Outage Duration (raw)": current_event["Cumulative Duration"]
                         })
                     current_event = {
                         "Lost Supply": e["Lost Supply"],
@@ -228,132 +229,274 @@ def process_outages(result_rows):
                 "Total Properties": events[0]["Total Properties"],
                 "Lost Supply": current_event["Lost Supply"],
                 "Regained Supply": current_event["Regained Supply"],
-                "Duration": current_event["Cumulative Duration"]
+                "Outage Duration (raw)": current_event["Cumulative Duration"]
             })
     processed_sorted = sorted(processed, key=lambda x: x["Property Height (m)"], reverse=True)
     return processed_sorted
 
+def compute_quick_table(pressure_df, logger_height, additional_headloss, unique_heights, total_props):
+    """
+    Computes a quick reactive overview table.
+    For each property height, determines:
+      - If the property was always in supply: Status = "In Supply".
+      - If currently out: 
+           Outage Start = the most recent time the property was in supply (or first time if never in supply).
+           Outage Duration = last timestamp - Outage Start.
+      - If the property was out but is now restored:
+           Outage Duration = duration of the last outage event,
+           Restoration Time = when supply was restored,
+           Restoration Duration = last timestamp - Restoration Time.
+    Also computes CML Impact = ((Outage Duration in hours * Total Properties) / 1473786) * 60.
+    Returns a DataFrame with columns:
+      Property Height (m), Total Properties, Status, Outage Start, Outage Duration, 
+      Restoration Time, Restoration Duration, CML Impact.
+    """
+    modified_pressure = pressure_df['Pressure'] - additional_headloss
+    effective_supply_head = logger_height + (modified_pressure - 3)
+    last_time = pressure_df['Datetime'].iloc[-1]
+    first_time = pressure_df['Datetime'].iloc[0]
+    rows = []
+    for h in unique_heights:
+        total_prop = total_props.get(h, 1)
+        if h <= logger_height:
+            condition = modified_pressure > 0
+        else:
+            condition = effective_supply_head > h
+        
+        # If always in supply:
+        if condition.all():
+            status = "In Supply"
+            outage_start = ""
+            outage_duration_str = ""
+            restoration_time = ""
+            restoration_duration = ""
+            cml_impact = 0
+        else:
+            if not condition.iloc[-1]:
+                # Currently out.
+                status = "Outage"
+                true_indices = condition[condition == True].index
+                if len(true_indices) > 0:
+                    outage_start = pressure_df['Datetime'].loc[true_indices[-1]]
+                else:
+                    outage_start = first_time
+                outage_duration_td = last_time - outage_start
+                outage_duration_str = format_timedelta(outage_duration_td)
+                restoration_time = ""
+                restoration_duration = ""
+                cml_impact = ((outage_duration_td.total_seconds()/3600 * total_prop) / 1473786)*60
+            else:
+                # Currently in supply but has been out.
+                status = "Restored"
+                lost_times = []
+                restored_times = []
+                prev = condition.iloc[0]
+                for idx, val in condition.iteritems():
+                    if prev == True and val == False:
+                        lost_times.append(pressure_df['Datetime'].loc[idx])
+                    if prev == False and val == True:
+                        restored_times.append(pressure_df['Datetime'].loc[idx])
+                    prev = val
+                if lost_times and restored_times:
+                    last_cycle_lost = None
+                    last_cycle_restored = None
+                    for lost in lost_times:
+                        poss = [rt for rt in restored_times if rt > lost]
+                        if poss:
+                            last_cycle_lost = lost
+                            last_cycle_restored = poss[0]
+                    if last_cycle_lost is not None and last_cycle_restored is not None:
+                        outage_duration_td = last_cycle_restored - last_cycle_lost
+                        outage_duration_str = format_timedelta(outage_duration_td)
+                        restoration_time = last_cycle_restored
+                        restoration_duration_td = last_time - last_cycle_restored
+                        restoration_duration = format_timedelta(restoration_duration_td)
+                        cml_impact = ((outage_duration_td.total_seconds()/3600 * total_prop) / 1473786)*60
+                    else:
+                        status = "In Supply"
+                        outage_start = ""
+                        outage_duration_str = ""
+                        restoration_time = ""
+                        restoration_duration = ""
+                        cml_impact = 0
+                else:
+                    status = "In Supply"
+                    outage_start = ""
+                    outage_duration_str = ""
+                    restoration_time = ""
+                    restoration_duration = ""
+                    cml_impact = 0
+        rows.append({
+            "Property Height (m)": h,
+            "Total Properties": total_prop,
+            "Status": status,
+            "Outage Start": outage_start if outage_start != "" else "",
+            "Outage Duration": outage_duration_str,
+            "Restoration Time": restoration_time if restoration_time != "" else "",
+            "Restoration Duration": restoration_duration,
+            "CML Impact": cml_impact
+        })
+    return pd.DataFrame(rows)
+
 # --------------------
 # Main UI & Processing (Review Mode)
 # --------------------
-with st.container():
-    st.title("Review Mode - Supply Interruption Analysis")
-    st.markdown("""
-    **Instructions:**
+st.markdown("## Review Mode - Supply Interruption Analysis")
+st.markdown("""
+**Instructions:**
 
-    1. **Pressure Data:**
-       - Open your CSV file in Excel.
-       - Copy the entire column of timestamps and paste it into the **Pressure Timestamps** box.
-       - Copy the entire column of pressure readings and paste it into the **Pressure Readings** box.
-    2. **Property Heights:**
-       - Copy the column of property heights and paste it into the **Property Heights** box.
-    3. Enter the height of the pressure logger.
-    4. Enter the simulated additional headloss (in meters) to deduct from the pressure readings.
-    5. Click **Run Analysis** to perform the full analysis (downloadable results).
-    """)
+1. **Pressure Data:**
+   - Open your CSV file in Excel.
+   - Copy the entire column of timestamps (in DD/MM/YYYY HH:MM format) and paste it into the **Pressure Timestamps** box.
+   - Copy the entire column of pressure readings and paste it into the **Pressure Readings** box.
+2. **Property Heights:**
+   - Copy the column of property heights and paste it into the **Property Heights** box.
+3. Enter the height of the pressure logger.
+4. Enter the simulated additional headloss (in meters) to deduct from the pressure readings.
+5. Click **Run Analysis** for full downloadable results or **Quick Table** for a quick reactive overview.
+""")
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        pressure_timestamps_text = st.text_area("Pressure Timestamps (one per line)", height=150)
-    with col2:
-        pressure_readings_text = st.text_area("Pressure Readings (one per line)", height=150)
-    with col3:
-        property_heights_text = st.text_area("Property Heights (one per line)", height=150)
+col1, col2, col3 = st.columns(3)
+with col1:
+    pressure_timestamps_text = st.text_area("Pressure Timestamps (one per line)", height=150)
+with col2:
+    pressure_readings_text = st.text_area("Pressure Readings (one per line)", height=150)
+with col3:
+    property_heights_text = st.text_area("Property Heights (one per line)", height=150)
 
-    logger_height = st.number_input("Enter the height of the pressure logger (in meters):", min_value=0.0, value=100.0)
-    additional_headloss = st.number_input("Simulate additional headloss (in meters):", min_value=0.0, value=0.0, step=0.1)
+logger_height = st.number_input("Enter the height of the pressure logger (in meters):", min_value=0.0, value=100.0)
+additional_headloss = st.number_input("Simulate additional headloss (in meters):", min_value=0.0, value=0.0, step=0.1)
 
-    if st.button("Run Analysis"):
-        if pressure_timestamps_text and pressure_readings_text and property_heights_text:
-            timestamps_list = [line.strip() for line in pressure_timestamps_text.splitlines() if line.strip()]
-            pressure_list = [line.strip() for line in pressure_readings_text.splitlines() if line.strip()]
-            heights_list = [line.strip() for line in property_heights_text.splitlines() if line.strip()]
+# Full Analysis
+if st.button("Run Analysis"):
+    if pressure_timestamps_text and pressure_readings_text and property_heights_text:
+        timestamps_list = [line.strip() for line in pressure_timestamps_text.splitlines() if line.strip()]
+        pressure_list = [line.strip() for line in pressure_readings_text.splitlines() if line.strip()]
+        heights_list = [line.strip() for line in property_heights_text.splitlines() if line.strip()]
 
-            try:
-                pressure_df = pd.DataFrame({
-                    'Datetime': [pd.to_datetime(ts, format="%d/%m/%Y %H:%M") for ts in timestamps_list],
-                    'Pressure': [float(p) for p in pressure_list]
+        try:
+            pressure_df = pd.DataFrame({
+                'Datetime': [pd.to_datetime(ts, format="%d/%m/%Y %H:%M") for ts in timestamps_list],
+                'Pressure': [float(p) for p in pressure_list]
+            })
+        except Exception as e:
+            st.error(f"Error parsing pressure data: {e}")
+            st.stop()
+
+        try:
+            heights_df = pd.DataFrame({
+                'Property_Height': [float(h) for h in heights_list]
+            })
+        except Exception as e:
+            st.error(f"Error parsing property heights: {e}")
+            st.stop()
+
+        pressure_df['Modified_Pressure'] = pressure_df['Pressure'] - additional_headloss
+        pressure_df['Effective_Supply_Head'] = logger_height + (pressure_df['Modified_Pressure'] - 3)
+        grouped = heights_df.groupby('Property_Height').size().reset_index(name='Total Properties')
+        total_props = dict(zip(grouped['Property_Height'], grouped['Total Properties']))
+
+        result_rows = []
+        for _, group_row in grouped.iterrows():
+            property_height = group_row['Property_Height']
+            total_properties = group_row['Total Properties']
+            if property_height <= logger_height:
+                supply_status = pressure_df['Modified_Pressure'] > 0
+            else:
+                supply_status = pressure_df['Effective_Supply_Head'] > property_height
+            interruptions = get_supply_interruptions(pressure_df['Datetime'], supply_status)
+            if not interruptions:
+                result_rows.append({
+                    'Property Height (m)': property_height,
+                    'Total Properties': total_properties,
+                    'Lost Supply': "In supply all times",
+                    'Regained Supply': "",
+                    'Outage Duration': "",
+                    'Restoration Duration': "",
+                    'Raw Duration': None
                 })
-            except Exception as e:
-                st.error(f"Error parsing pressure data: {e}")
-                st.stop()
-
-            try:
-                heights_df = pd.DataFrame({
-                    'Property_Height': [float(h) for h in heights_list]
-                })
-            except Exception as e:
-                st.error(f"Error parsing property heights: {e}")
-                st.stop()
-
-            pressure_df['Modified_Pressure'] = pressure_df['Pressure'] - additional_headloss
-            pressure_df['Effective_Supply_Head'] = logger_height + (pressure_df['Modified_Pressure'] - 3)
-            grouped = heights_df.groupby('Property_Height').size().reset_index(name='Total Properties')
-            total_props = dict(zip(grouped['Property_Height'], grouped['Total Properties']))
-
-            result_rows = []
-            for _, group_row in grouped.iterrows():
-                property_height = group_row['Property_Height']
-                total_properties = group_row['Total Properties']
-                if property_height <= logger_height:
-                    supply_status = pressure_df['Modified_Pressure'] > 0
-                else:
-                    supply_status = pressure_df['Effective_Supply_Head'] > property_height
-                interruptions = get_supply_interruptions(pressure_df['Datetime'], supply_status)
-                if not interruptions:
+            else:
+                for i, intr in enumerate(interruptions):
+                    if intr['duration'] is None:
+                        continue
+                    duration_td = intr['duration']
+                    if i > 0:
+                        restoration_td = intr['lost_time'] - interruptions[i-1]['regained_time']
+                        formatted_restoration = format_timedelta(restoration_td)
+                    else:
+                        formatted_restoration = ""
                     result_rows.append({
                         'Property Height (m)': property_height,
                         'Total Properties': total_properties,
-                        'Lost Supply': "In supply all times",
-                        'Regained Supply': "",
-                        'Outage Duration': "",
-                        'Restoration Duration': "",
-                        'Raw Duration': None
+                        'Lost Supply': intr['lost_time'],
+                        'Regained Supply': intr['regained_time'],
+                        'Outage Duration': duration_td,
+                        'Restoration Duration': formatted_restoration,
+                        'Raw Duration': duration_td
                     })
-                else:
-                    for i, intr in enumerate(interruptions):
-                        if intr['duration'] is None:
-                            continue
-                        duration_td = intr['duration']
-                        if i > 0:
-                            restoration_td = intr['lost_time'] - interruptions[i-1]['regained_time']
-                            formatted_restoration = format_timedelta(restoration_td)
-                        else:
-                            formatted_restoration = ""
-                        result_rows.append({
-                            'Property Height (m)': property_height,
-                            'Total Properties': total_properties,
-                            'Lost Supply': intr['lost_time'],
-                            'Regained Supply': intr['regained_time'],
-                            'Outage Duration': duration_td,
-                            'Restoration Duration': formatted_restoration,
-                            'Raw Duration': duration_td
-                        })
 
-            results_df = pd.DataFrame(result_rows)
-            # Format the "Outage Duration" column to a string for display/export.
-            results_df['Outage Duration'] = results_df['Outage Duration'].apply(lambda x: format_timedelta(x) if pd.notnull(x) and isinstance(x, timedelta) else x)
-            raw_durations = results_df['Raw Duration']
-            raw_excel = generate_excel_file(results_df)
+        results_df = pd.DataFrame(result_rows)
+        # Format "Outage Duration" as a formatted string.
+        results_df['Outage Duration'] = results_df['Outage Duration'].apply(lambda x: format_timedelta(x) if pd.notnull(x) and isinstance(x, timedelta) else x)
+        raw_excel = generate_excel_file(results_df)
+        st.download_button(
+            label="Download Raw Data as Excel (.xlsx)",
+            data=raw_excel,
+            file_name="raw_results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        processed_events = process_outages(result_rows)
+        if processed_events:
+            processed_df = pd.DataFrame(processed_events)
+            processed_df = processed_df.sort_values(by="Property Height (m)", ascending=False)
+            processed_excel_data = generate_processed_excel_file(processed_df)
             st.download_button(
-                label="Download Raw Data as Excel (.xlsx)",
-                data=raw_excel,
-                file_name="raw_results.xlsx",
+                label="Download Processed Data as Excel (.xlsx)",
+                data=processed_excel_data,
+                file_name="processed_results.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
-            processed_events = process_outages(result_rows)
-            if processed_events:
-                processed_df = pd.DataFrame(processed_events)
-                processed_df = processed_df.sort_values(by="Property Height (m)", ascending=False)
-                processed_excel_data = generate_processed_excel_file(processed_df)
-                st.download_button(
-                    label="Download Processed Data as Excel (.xlsx)",
-                    data=processed_excel_data,
-                    file_name="processed_results.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            else:
-                st.info("No processed outage events meet the criteria for being truly out of supply.")
         else:
-            st.error("Please provide data in all text areas.")
+            st.info("No processed outage events meet the criteria for being truly out of supply.")
+    else:
+        st.error("Please provide data in all text areas.")
+
+# Quick Table Functionality
+if st.button("Quick Table"):
+    if pressure_timestamps_text and pressure_readings_text and property_heights_text:
+        timestamps_list = [line.strip() for line in pressure_timestamps_text.splitlines() if line.strip()]
+        pressure_list = [line.strip() for line in pressure_readings_text.splitlines() if line.strip()]
+        heights_list = [line.strip() for line in property_heights_text.splitlines() if line.strip()]
+        try:
+            pressure_df = pd.DataFrame({
+                'Datetime': [pd.to_datetime(ts, format="%d/%m/%Y %H:%M") for ts in timestamps_list],
+                'Pressure': [float(p) for p in pressure_list]
+            })
+        except Exception as e:
+            st.error(f"Error parsing pressure data: {e}")
+            st.stop()
+        try:
+            heights_df = pd.DataFrame({
+                'Property_Height': [float(h) for h in heights_list]
+            })
+        except Exception as e:
+            st.error(f"Error parsing property heights: {e}")
+            st.stop()
+
+        pressure_df['Modified_Pressure'] = pressure_df['Pressure'] - additional_headloss
+        pressure_df['Effective_Supply_Head'] = logger_height + (pressure_df['Modified_Pressure'] - 3)
+        grouped = heights_df.groupby('Property_Height').size().reset_index(name='Total Properties')
+        total_props = dict(zip(grouped['Property_Height'], grouped['Total Properties']))
+        unique_heights = sorted(heights_df['Property_Height'].unique())
+
+        quick_df = compute_quick_table(pressure_df, logger_height, additional_headloss, unique_heights, total_props)
+        st.markdown("### Quick Supply Status Table")
+        st.dataframe(quick_df)
+        total_impact = quick_df['CML Impact'].sum()
+        st.markdown(f"**Total Impact: {total_impact:.4f}**")
+        data_duration_hours = (pressure_df['Datetime'].iloc[-1] - pressure_df['Datetime'].iloc[0]).total_seconds() / 3600
+        cml_hr = total_impact / data_duration_hours if data_duration_hours > 0 else 0
+        st.markdown(f"**CML/hr: {cml_hr:.4f}**")
+    else:
+        st.error("Please provide data in all text areas.")
