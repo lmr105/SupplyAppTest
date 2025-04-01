@@ -493,7 +493,7 @@ if quick_table_clicked:
         cml_hr = total_impact / total_duration_hours if total_duration_hours > 0 else 0
         st.markdown(f"**CML/hr: {cml_hr:.6f}**")
         
-       # ---- New Plotting Visual Aid for Quick Table ----
+    # ---- New Plotting Visual Aid for Quick Table ----
 # Compute total head for each timestamp.
 pressure_df['Total_Head'] = logger_height + (pressure_df['Pressure'] - additional_headloss)
 # Resample the data to 10-minute intervals.
@@ -521,5 +521,6 @@ for h in unique_heights:
 ax.set_title("Total Head vs Time with Property Height Lines")
 ax.legend()
 st.pyplot(fig, use_container_width=True)
+
 else:
     st.error("Please provide data in all text areas.")
