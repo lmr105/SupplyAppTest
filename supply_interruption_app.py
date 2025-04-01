@@ -493,23 +493,33 @@ if quick_table_clicked:
         cml_hr = total_impact / total_duration_hours if total_duration_hours > 0 else 0
         st.markdown(f"**CML/hr: {cml_hr:.6f}**")
         
-        # ---- Plotting Visual Aid ----
-        # Compute total head for each timestamp.
-        pressure_df['Total_Head'] = logger_height + (pressure_df['Pressure'] - additional_headloss)
-        # Resample to 10-minute intervals.
-        pressure_resampled = pressure_df.set_index('Datetime').resample('10T').mean().reset_index()
-        
-        fig, ax = plt.subplots(figsize=(10,6))
-        ax.plot(pressure_resampled['Datetime'], pressure_resampled['Total_Head'], color='blue', marker='o', linestyle='-', label='Total Head')
-        # Overlay horizontal lines for each property height.
-        for h in unique_heights:
-            ax.axhline(y=h, color='green', linestyle='--', alpha=0.7)
-            count = total_props.get(h, 0)
-            ax.text(pressure_resampled['Datetime'].iloc[-1], h, f" {count}", color='green', va='center', fontsize=9)
-        ax.set_xlabel("Time")
-        ax.set_ylabel("Total Head (m)")
-        ax.legend()
-        ax.set_title("Total Head vs Time with Property Height Lines")
-        st.pyplot(fig, use_container_width=True)
+       # ---- New Plotting Visual Aid for Quick Table ----
+# Compute total head for each timestamp.
+pressure_df['Total_Head'] = logger_height + (pressure_df['Pressure'] - additional_headloss)
+# Resample the data to 10-minute intervals.
+pressure_resampled = pressure_df.set_index('Datetime').resample('10T').mean().reset_index()
+
+# Create the plot.
+fig, ax = plt.subplots(figsize=(10, 6))
+# Plot total head vs. time as a blue line.
+ax.plot(pressure_resampled['Datetime'], pressure_resampled['Total_Head'], 
+        color='blue', marker='o', linestyle='-', label='Total Head')
+ax.set_xlabel("Time")
+ax.set_ylabel("Total Head (m)")
+# Format x-axis dates and rotate labels.
+fig.autofmt_xdate()
+
+# For each unique property height, draw a horizontal dashed red line across the plot.
+for h in unique_heights:
+    ax.hlines(y=h, xmin=pressure_resampled['Datetime'].min(), xmax=pressure_resampled['Datetime'].max(), 
+              colors='red', linestyles='dashed', alpha=0.7)
+    # Annotate with property height and count.
+    count = total_props.get(h, 0)
+    ax.text(pressure_resampled['Datetime'].max(), h, f"  {h} m ({count})", 
+            va='center', ha='left', fontsize=9, color='black')
+
+ax.set_title("Total Head vs Time with Property Height Lines")
+ax.legend()
+st.pyplot(fig, use_container_width=True)
     else:
         st.error("Please provide data in all text areas.")
