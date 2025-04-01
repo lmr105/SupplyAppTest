@@ -59,6 +59,7 @@ def get_supply_interruptions(time_series, status_series):
     interruptions = []
     in_interrupt = False
     start_time = None
+
     for i in range(len(status_series)):
         if not status_series.iloc[i] and not in_interrupt:
             in_interrupt = True
@@ -72,6 +73,7 @@ def get_supply_interruptions(time_series, status_series):
                 'duration': duration
             })
             in_interrupt = False
+
     if in_interrupt:
         end_time = time_series.iloc[-1]
         duration = end_time - start_time
@@ -158,13 +160,11 @@ def generate_processed_excel_file(processed_df):
         workbook = writer.book
         worksheet = writer.sheets['Processed Results']
         num_rows = processed_df.shape[0] + 1
-        # Sum CML Impact.
         cml_col_index = processed_df.columns.get_loc("CML Impact")
         cml_col_letter = xl_col_to_name(cml_col_index)
         worksheet.write(num_rows, 0, "Total Impact")
         sum_range_cml = f"{cml_col_letter}2:{cml_col_letter}{num_rows}"
         worksheet.write_formula(num_rows, cml_col_index, f"=SUM({sum_range_cml})")
-        # Sum Cost.
         cost_col_index = processed_df.columns.get_loc("Cost")
         cost_col_letter = xl_col_to_name(cost_col_index)
         worksheet.write(num_rows, cost_col_index, "Total Cost")
@@ -231,7 +231,7 @@ def compute_quick_table(pressure_df, logger_height, additional_headloss, unique_
     Computes a quick reactive overview table.
     For each property height, determines:
       - If always in supply: Status = "In Supply".
-      - If currently out: 
+      - If currently out:
            Outage Start = the most recent time the property was in supply (or first time if never in supply),
            Outage Duration = last timestamp - Outage Start.
       - If was out but is now restored:
@@ -478,6 +478,8 @@ if quick_table_clicked:
             st.stop()
         pressure_df['Modified_Pressure'] = pressure_df['Pressure'] - additional_headloss
         pressure_df['Effective_Supply_Head'] = logger_height + (pressure_df['Modified_Pressure'] - 3)
+        # For the graph, compute total head:
+        pressure_df['Total_Head'] = logger_height + (pressure_df['Pressure'] - additional_headloss)
         grouped = heights_df.groupby('Property_Height').size().reset_index(name='Total Properties')
         total_props = dict(zip(grouped['Property_Height'], grouped['Total Properties']))
         unique_heights = sorted(heights_df['Property_Height'].unique())
@@ -491,23 +493,23 @@ if quick_table_clicked:
         cml_hr = total_impact / total_duration_hours if total_duration_hours > 0 else 0
         st.markdown(f"**CML/hr: {cml_hr:.6f}**")
         
-        # Plotting Visual Aid
-        # Resample pressure data to 10-minute intervals.
+        # ---- Plotting Visual Aid ----
+        # Compute total head for each timestamp.
+        pressure_df['Total_Head'] = logger_height + (pressure_df['Pressure'] - additional_headloss)
+        # Resample to 10-minute intervals.
         pressure_resampled = pressure_df.set_index('Datetime').resample('10T').mean().reset_index()
-        fig, ax1 = plt.subplots(figsize=(10, 6))
-        ax2 = ax1.twinx()
-        ax1.plot(pressure_resampled['Datetime'], pressure_resampled['Pressure'], color='blue', marker='o', linestyle='-', label='Pressure')
-        ax1.set_xlabel("Time")
-        ax1.set_ylabel("Pressure (mH)", color='blue')
-        ax1.tick_params(axis='y', labelcolor='blue')
-        # Plot vertical bars for property heights.
+        
+        fig, ax = plt.subplots(figsize=(10,6))
+        ax.plot(pressure_resampled['Datetime'], pressure_resampled['Total_Head'], color='blue', marker='o', linestyle='-', label='Total Head')
+        # Overlay horizontal lines for each property height.
         for h in unique_heights:
+            ax.axhline(y=h, color='green', linestyle='--', alpha=0.7)
             count = total_props.get(h, 0)
-            ax2.axhline(y=h, color='green', linestyle='--', alpha=0.7)
-            ax2.text(pressure_resampled['Datetime'].iloc[-1], h, f" {count}", color='green', va='center', fontsize=9)
-        ax2.set_ylabel("Property Height (m)", color='green')
-        ax2.tick_params(axis='y', labelcolor='green')
-        fig.suptitle("Pressure vs Time with Property Height Distribution")
+            ax.text(pressure_resampled['Datetime'].iloc[-1], h, f" {count}", color='green', va='center', fontsize=9)
+        ax.set_xlabel("Time")
+        ax.set_ylabel("Total Head (m)")
+        ax.legend()
+        ax.set_title("Total Head vs Time with Property Height Lines")
         st.pyplot(fig, use_container_width=True)
     else:
         st.error("Please provide data in all text areas.")
