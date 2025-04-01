@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from xlsxwriter.utility import xl_col_to_name
 
@@ -38,7 +39,7 @@ st.markdown(
 # Display Centered Logo
 # --------------------
 st.markdown(
-    "<div style='text-align: center;'><img src='https://www.dwrcymru.com/-/media/project/images/brand/logo/dcww-logo-colour-x2.ashx?h=36&w=140&la=en&hash=1FC5F218FEA70D80F68EA05374493D16'></div>",
+    "<div style='text-align: center;'><img src='https://via.placeholder.com/800x150.png?text=Water+Supply+Interruption+Calculator' width='400'></div>",
     unsafe_allow_html=True
 )
 
@@ -58,6 +59,7 @@ def get_supply_interruptions(time_series, status_series):
     interruptions = []
     in_interrupt = False
     start_time = None
+
     for i in range(len(status_series)):
         if not status_series.iloc[i] and not in_interrupt:
             in_interrupt = True
@@ -71,6 +73,7 @@ def get_supply_interruptions(time_series, status_series):
                 'duration': duration
             })
             in_interrupt = False
+
     if in_interrupt:
         end_time = time_series.iloc[-1]
         duration = end_time - start_time
@@ -113,15 +116,19 @@ def generate_excel_file(results_df):
     df_excel['Raw Duration (seconds)'] = df_excel['Raw Duration'].apply(
         lambda x: x.total_seconds() if pd.notnull(x) else None)
     df_excel = df_excel.drop(columns=["Raw Duration"])
+    
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_excel.to_excel(writer, index=False, sheet_name='Results')
         workbook = writer.book
         worksheet = writer.sheets['Results']
-        num_rows = df_excel.shape[0] + 1
+        
+        num_rows = df_excel.shape[0] + 1  # header + data rows
         num_cols = df_excel.shape[1]
+        
         raw_col_index = df_excel.columns.get_loc("Raw Duration (seconds)")
         worksheet.set_column(raw_col_index, raw_col_index, None, None, {'hidden': True})
+        
         highlight_format = workbook.add_format({'bg_color': '#FFFF00'})
         raw_col_letter = xl_col_to_name(raw_col_index)
         visible_range = f"A2:{xl_col_to_name(num_cols - 1)}{num_rows}"
@@ -149,18 +156,22 @@ def generate_processed_excel_file(processed_df):
     processed_df['Outage Duration'] = processed_df['Outage Duration (raw)'].apply(
         lambda x: format_timedelta(x) if pd.notnull(x) and isinstance(x, timedelta) else "")
     processed_df = processed_df.drop(columns=["Outage Duration (raw)"])
+    
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         processed_df.to_excel(writer, index=False, sheet_name='Processed Results')
         workbook = writer.book
         worksheet = writer.sheets['Processed Results']
-        num_rows = processed_df.shape[0] + 1
+        
+        num_rows = processed_df.shape[0] + 1  # including header
+        
         # Sum CML Impact.
         cml_col_index = processed_df.columns.get_loc("CML Impact")
         cml_col_letter = xl_col_to_name(cml_col_index)
         worksheet.write(num_rows, 0, "Total Impact")
         sum_range_cml = f"{cml_col_letter}2:{cml_col_letter}{num_rows}"
         worksheet.write_formula(num_rows, cml_col_index, f"=SUM({sum_range_cml})")
+        
         # Sum Cost.
         cost_col_index = processed_df.columns.get_loc("Cost")
         cost_col_letter = xl_col_to_name(cost_col_index)
@@ -227,16 +238,17 @@ def compute_quick_table(pressure_df, logger_height, additional_headloss, unique_
     """
     Computes a quick reactive overview table.
     For each property height, determines:
-      - If the property was always in supply: Status = "In Supply".
-      - If currently out:
-           Outage Start = the most recent time the property was in supply (or first time if never in supply).
+      - If always in supply: Status = "In Supply".
+      - If currently out: 
+           Outage Start = the most recent time the property was in supply (or first time if never in supply),
            Outage Duration = last timestamp - Outage Start.
-      - If the property was out but is now restored:
+      - If was out but is now restored:
            Outage Duration = duration of the last outage event,
            Restoration Time = when supply was restored,
            Restoration Duration = last timestamp - Restoration Time.
-    Also computes CML Impact = ((Outage Duration in hours * Total Properties) / 1473786) * 60,
-    and CML/hr = (Total CML Impact / total duration in hours).
+    Also computes:
+      CML Impact = ((Outage Duration in hours * Total Properties) / 1473786) * 60,
+      and CML/hr = (Total CML Impact / total duration in hours).
     Returns a DataFrame with columns:
       Property Height (m), Total Properties, Status, Outage Start, Outage Duration, 
       Restoration Time, Restoration Duration, CML Impact, and CML/hr.
@@ -263,7 +275,6 @@ def compute_quick_table(pressure_df, logger_height, additional_headloss, unique_
         else:
             if not condition.iloc[-1]:
                 status = "Outage"
-                # Search backwards for the most recent True.
                 reversed_condition = condition[::-1]
                 true_indices = [idx for idx, val in reversed_condition.items() if val]
                 if true_indices:
@@ -331,9 +342,9 @@ def compute_quick_table(pressure_df, logger_height, additional_headloss, unique_
     return quick_df
 
 # --------------------
-# Main UI & Processing (Review Mode)
+# Main UI & Processing
 # --------------------
-st.markdown("## Supply Interruption Calculator")
+st.markdown("## Quick Reactive Overview")
 st.markdown("""
 **Instructions:**
 
@@ -359,7 +370,7 @@ with col3:
 logger_height = st.number_input("Enter the height of the pressure logger (in meters):", min_value=0.0, value=100.0)
 additional_headloss = st.number_input("Simulate additional headloss (in meters):", min_value=0.0, value=0.0, step=0.1)
 
-# Buttons placed side by side.
+# Buttons for full analysis and quick table.
 col_buttons = st.columns(2)
 with col_buttons[0]:
     run_analysis_clicked = st.button("Run Analysis")
@@ -434,7 +445,6 @@ if run_analysis_clicked:
                     })
 
         results_df = pd.DataFrame(result_rows)
-        # Format the Outage Duration as string.
         results_df['Outage Duration'] = results_df['Outage Duration'].apply(lambda x: format_timedelta(x) if pd.notnull(x) and isinstance(x, timedelta) else x)
         raw_excel = generate_excel_file(results_df)
         st.download_button(
@@ -443,6 +453,7 @@ if run_analysis_clicked:
             file_name="raw_results.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
         processed_events = process_outages(result_rows)
         if processed_events:
             processed_df = pd.DataFrame(processed_events)
@@ -494,5 +505,29 @@ if quick_table_clicked:
         total_duration_hours = (pressure_df['Datetime'].iloc[-1] - pressure_df['Datetime'].iloc[0]).total_seconds() / 3600
         cml_hr = total_impact / total_duration_hours if total_duration_hours > 0 else 0
         st.markdown(f"**CML/hr: {cml_hr:.6f}**")
+        
+        # ---- Plotting Visual Aids ----
+        # Create a figure with two subplots: a time series and a histogram.
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=False)
+        
+        # Top subplot: Time series line chart of Pressure vs Time.
+        ax1.plot(pressure_df['Datetime'], pressure_df['Pressure'], marker='o', linestyle='-', color='blue', label='Pressure')
+        ax1.axhline(y=logger_height, color='red', linestyle='--', label=f'Logger Height ({logger_height}m)')
+        ax1.set_xlabel("Time")
+        ax1.set_ylabel("Pressure (mH)")
+        ax1.set_title("Pressure Readings Over Time")
+        ax1.legend()
+        
+        # Bottom subplot: Horizontal bar chart of property heights vs count.
+        # Calculate counts from heights_df.
+        counts = heights_df['Property_Height'].value_counts().sort_index()
+        ax2.barh(counts.index, counts.values, color='green')
+        for i, v in enumerate(counts.values):
+            ax2.text(v + 0.1, list(counts.index)[i], str(v), color='black', va='center')
+        ax2.set_xlabel("Number of Properties")
+        ax2.set_ylabel("Property Height (m)")
+        ax2.set_title("Distribution of Property Heights")
+        
+        st.pyplot(fig, use_container_width=True)
     else:
         st.error("Please provide data in all text areas.")
