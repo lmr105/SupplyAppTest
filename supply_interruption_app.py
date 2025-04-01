@@ -46,7 +46,6 @@ st.markdown(
 # --------------------
 # Helper Functions
 # --------------------
-
 def get_supply_interruptions(time_series, status_series):
     """
     Given a time_series (Pandas Series of datetime objects) and a boolean status_series 
@@ -59,7 +58,6 @@ def get_supply_interruptions(time_series, status_series):
     interruptions = []
     in_interrupt = False
     start_time = None
-
     for i in range(len(status_series)):
         if not status_series.iloc[i] and not in_interrupt:
             in_interrupt = True
@@ -73,7 +71,6 @@ def get_supply_interruptions(time_series, status_series):
                 'duration': duration
             })
             in_interrupt = False
-
     if in_interrupt:
         end_time = time_series.iloc[-1]
         duration = end_time - start_time
@@ -123,7 +120,7 @@ def generate_excel_file(results_df):
         workbook = writer.book
         worksheet = writer.sheets['Results']
         
-        num_rows = df_excel.shape[0] + 1  # header + data rows
+        num_rows = df_excel.shape[0] + 1
         num_cols = df_excel.shape[1]
         
         raw_col_index = df_excel.columns.get_loc("Raw Duration (seconds)")
@@ -163,16 +160,14 @@ def generate_processed_excel_file(processed_df):
         workbook = writer.book
         worksheet = writer.sheets['Processed Results']
         
-        num_rows = processed_df.shape[0] + 1  # including header
+        num_rows = processed_df.shape[0] + 1
         
-        # Sum CML Impact.
         cml_col_index = processed_df.columns.get_loc("CML Impact")
         cml_col_letter = xl_col_to_name(cml_col_index)
         worksheet.write(num_rows, 0, "Total Impact")
         sum_range_cml = f"{cml_col_letter}2:{cml_col_letter}{num_rows}"
         worksheet.write_formula(num_rows, cml_col_index, f"=SUM({sum_range_cml})")
         
-        # Sum Cost.
         cost_col_index = processed_df.columns.get_loc("Cost")
         cost_col_letter = xl_col_to_name(cost_col_index)
         worksheet.write(num_rows, cost_col_index, "Total Cost")
@@ -370,7 +365,6 @@ with col3:
 logger_height = st.number_input("Enter the height of the pressure logger (in meters):", min_value=0.0, value=100.0)
 additional_headloss = st.number_input("Simulate additional headloss (in meters):", min_value=0.0, value=0.0, step=0.1)
 
-# Buttons for full analysis and quick table.
 col_buttons = st.columns(2)
 with col_buttons[0]:
     run_analysis_clicked = st.button("Run Analysis")
@@ -453,81 +447,10 @@ if run_analysis_clicked:
             file_name="raw_results.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
         processed_events = process_outages(result_rows)
         if processed_events:
             processed_df = pd.DataFrame(processed_events)
             processed_df = processed_df.sort_values(by="Property Height (m)", ascending=False)
             processed_excel_data = generate_processed_excel_file(processed_df)
             st.download_button(
-                label="Download Processed Data as Excel (.xlsx)",
-                data=processed_excel_data,
-                file_name="processed_results.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.info("No processed outage events meet the criteria for being truly out of supply.")
-    else:
-        st.error("Please provide data in all text areas.")
-
-if quick_table_clicked:
-    if pressure_timestamps_text and pressure_readings_text and property_heights_text:
-        timestamps_list = [line.strip() for line in pressure_timestamps_text.splitlines() if line.strip()]
-        pressure_list = [line.strip() for line in pressure_readings_text.splitlines() if line.strip()]
-        heights_list = [line.strip() for line in property_heights_text.splitlines() if line.strip()]
-        try:
-            pressure_df = pd.DataFrame({
-                'Datetime': [pd.to_datetime(ts, format="%d/%m/%Y %H:%M") for ts in timestamps_list],
-                'Pressure': [float(p) for p in pressure_list]
-            })
-        except Exception as e:
-            st.error(f"Error parsing pressure data: {e}")
-            st.stop()
-        try:
-            heights_df = pd.DataFrame({
-                'Property_Height': [float(h) for h in heights_list]
-            })
-        except Exception as e:
-            st.error(f"Error parsing property heights: {e}")
-            st.stop()
-
-        pressure_df['Modified_Pressure'] = pressure_df['Pressure'] - additional_headloss
-        pressure_df['Effective_Supply_Head'] = logger_height + (pressure_df['Modified_Pressure'] - 3)
-        grouped = heights_df.groupby('Property_Height').size().reset_index(name='Total Properties')
-        total_props = dict(zip(grouped['Property_Height'], grouped['Total Properties']))
-        unique_heights = sorted(heights_df['Property_Height'].unique())
-        
-        quick_df = compute_quick_table(pressure_df, logger_height, additional_headloss, unique_heights, total_props)
-        st.markdown("### Quick Supply Status Table")
-        st.dataframe(quick_df)
-        total_impact = quick_df['CML Impact'].sum()
-        st.markdown(f"**Total Impact: {total_impact:.6f}**")
-        total_duration_hours = (pressure_df['Datetime'].iloc[-1] - pressure_df['Datetime'].iloc[0]).total_seconds() / 3600
-        cml_hr = total_impact / total_duration_hours if total_duration_hours > 0 else 0
-        st.markdown(f"**CML/hr: {cml_hr:.6f}**")
-        
-        # ---- Plotting Visual Aids ----
-        # Create a figure with two subplots: a time series and a histogram.
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=False)
-        
-        # Top subplot: Time series line chart of Pressure vs Time.
-        ax1.plot(pressure_df['Datetime'], pressure_df['Pressure'], marker='o', linestyle='-', color='blue', label='Pressure')
-        ax1.axhline(y=logger_height, color='red', linestyle='--', label=f'Logger Height ({logger_height}m)')
-        ax1.set_xlabel("Time")
-        ax1.set_ylabel("Pressure (mH)")
-        ax1.set_title("Pressure Readings Over Time")
-        ax1.legend()
-        
-        # Bottom subplot: Horizontal bar chart of property heights vs count.
-        # Calculate counts from heights_df.
-        counts = heights_df['Property_Height'].value_counts().sort_index()
-        ax2.barh(counts.index, counts.values, color='green')
-        for i, v in enumerate(counts.values):
-            ax2.text(v + 0.1, list(counts.index)[i], str(v), color='black', va='center')
-        ax2.set_xlabel("Number of Properties")
-        ax2.set_ylabel("Property Height (m)")
-        ax2.set_title("Distribution of Property Heights")
-        
-        st.pyplot(fig, use_container_width=True)
-    else:
-        st.error("Please provide data in all text areas.")
+                label="Download Processed Data as Excel (.xlsx
