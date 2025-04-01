@@ -521,6 +521,5 @@ for h in unique_heights:
 ax.set_title("Total Head vs Time with Property Height Lines")
 ax.legend()
 st.pyplot(fig, use_container_width=True)
-
 else:
     st.error("Please provide data in all text areas.")
