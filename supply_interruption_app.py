@@ -493,7 +493,7 @@ if quick_table_clicked:
         cml_hr = total_impact / total_duration_hours if total_duration_hours > 0 else 0
         st.markdown(f"**CML/hr: {cml_hr:.6f}**")
         
-    # ---- New Plotting Visual Aid for Quick Table ----
+# ---- New Plotting Visual Aid for Quick Table ----
 # Compute total head for each timestamp.
 pressure_df['Total_Head'] = logger_height + (pressure_df['Pressure'] - additional_headloss)
 # Resample the data to 10-minute intervals.
@@ -509,11 +509,10 @@ ax.set_ylabel("Total Head (m)")
 # Format x-axis dates and rotate labels.
 fig.autofmt_xdate()
 
-# For each unique property height, draw a horizontal dashed red line across the plot.
+# Overlay horizontal dashed red lines for each property height.
 for h in unique_heights:
     ax.hlines(y=h, xmin=pressure_resampled['Datetime'].min(), xmax=pressure_resampled['Datetime'].max(), 
               colors='red', linestyles='dashed', alpha=0.7)
-    # Annotate with property height and count.
     count = total_props.get(h, 0)
     ax.text(pressure_resampled['Datetime'].max(), h, f"  {h} m ({count})", 
             va='center', ha='left', fontsize=9, color='black')
@@ -521,5 +520,3 @@ for h in unique_heights:
 ax.set_title("Total Head vs Time with Property Height Lines")
 ax.legend()
 st.pyplot(fig, use_container_width=True)
-else:
-    st.error("Please provide data in all text areas.")
