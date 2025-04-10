@@ -8,7 +8,7 @@ import os
 flow_conversion = {
     "L/s": 0.001,
     "m³/s": 1,
-    "ML/d": 1e6/86400
+    "ML/d": 1e6 / 86400
 }
 
 # --- Rule-based calculation functions ---
@@ -46,7 +46,7 @@ def calculate_flow_based_retention_single(capacity, flow_m3s, flow_source="Flow"
 def calculate_rate_based_retention(current_level_percent, rate_of_change_percent):
     if rate_of_change_percent == 0:
         return None
-    # Assume full tank if current level not provided.
+    # Assume full tank if current level is not provided.
     current_level = current_level_percent if current_level_percent is not None else 100
     retention_time_hours = current_level / abs(rate_of_change_percent)
     note = "Using provided current level (%)." if current_level_percent is not None else "Assuming 100% fill (full tank)."
@@ -135,10 +135,10 @@ def calculate_all_methods(params):
     
     return results
 
-# --- Load the Random Forest Model from the specified path ---
-@st.cache(allow_output_mutation=True)
+# --- Load the Random Forest Model ---
+@st.cache_resource
 def load_rf_model():
-    model_path = "models/train_rf_model.pkl.py"
+    model_path = "models/train_rf_model.pkl"  # Updated file path (remove the '.py' extension)
     if os.path.exists(model_path):
         return joblib.load(model_path)
     else:
