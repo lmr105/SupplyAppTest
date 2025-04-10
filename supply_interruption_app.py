@@ -1,26 +1,19 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import joblib
+import os
 
-# ---------------------------
-# Unit conversion factors (all flows to m³/s)
+# --- Unit conversion factors for flows (to m³/s) ---
 flow_conversion = {
-    "L/s": 0.001,         # 1 L/s = 0.001 m³/s
+    "L/s": 0.001,
     "m³/s": 1,
-    "ML/d": 1e6 / 86400     # 1 Megalitre per day in m³/s
+    "ML/d": 1e6/86400
 }
 
-# ---------------------------
-# FUNCTIONS FOR CALCULATIONS
+# --- Rule-based calculation functions ---
 
 def calculate_net_flow_retention(capacity, inlet_flow_m3s, outlet_flow_m3s):
-    """
-    Calculates retention time based on net flow:
-      net_flow = outlet_flow_m3s - inlet_flow_m3s.
-    If net_flow is positive (water leaving), then:
-      T_ret = capacity / net_flow.
-    Returns a dictionary with retention time in hours or a note if the tank is filling.
-    """
     net_flow = outlet_flow_m3s - inlet_flow_m3s
     if net_flow <= 0:
         return {
@@ -39,10 +32,6 @@ def calculate_net_flow_retention(capacity, inlet_flow_m3s, outlet_flow_m3s):
     }
 
 def calculate_flow_based_retention_single(capacity, flow_m3s, flow_source="Flow"):
-    """
-    Calculates retention time if only one flow (inlet or outlet) is provided.
-    The method assumes the provided flow approximates the effective outflow.
-    """
     if flow_m3s <= 0 or capacity is None:
         return None
     retention_time_seconds = capacity / flow_m3s
@@ -55,11 +44,6 @@ def calculate_flow_based_retention_single(capacity, flow_m3s, flow_source="Flow"
     }
 
 def calculate_rate_based_retention(current_level_percent, rate_of_change_percent):
-    """
-    Estimates retention time using percentage-based data.
-    If current_level_percent is not provided, assume a full tank (100%).
-    Calculation: T_ret = (Current Level %) / |Rate-of-Change (%/hr)|.
-    """
     if rate_of_change_percent == 0:
         return None
     # Assume full tank if current level not provided.
@@ -74,11 +58,6 @@ def calculate_rate_based_retention(current_level_percent, rate_of_change_percent
     }
 
 def calculate_geometric_retention_simple(current_level_m, rate_of_change_mph):
-    """
-    Estimates retention time based on level drop.
-    T_ret = Current Level (m) / |Rate-of-Change (m/hr)|.
-    This method requires only current level (in m) and rate of change in m/hr.
-    """
     if rate_of_change_mph == 0:
         return None
     retention_time_hours = current_level_m / abs(rate_of_change_mph)
@@ -90,64 +69,37 @@ def calculate_geometric_retention_simple(current_level_m, rate_of_change_mph):
     }
 
 def infer_capacity(current_level_m, surface_area, current_level_percent):
-    """
-    Infers the total volumetric capacity if not directly provided.
-    Uses:
-       current_volume = surface_area * current_level_m,
-       current_volume = capacity * (current_level_percent / 100).
-    Rearranged:
-       capacity = (surface_area * current_level_m * 100) / current_level_percent.
-    """
     if current_level_percent <= 0:
         return None
     return (surface_area * current_level_m * 100) / current_level_percent
 
 def infer_capacity_from_net_flow(rate_of_change_percent, inlet_flow_m3s, outlet_flow_m3s):
-    """
-    Alternative capacity inference using net flow and rate-of-change (%).
-    Based on:
-       rate_of_change (%) ≈ (net_flow / capacity) * 100  =>  capacity = (net_flow * 100) / |rate_of_change|
-    """
     net_flow = outlet_flow_m3s - inlet_flow_m3s
     if rate_of_change_percent == 0 or net_flow <= 0:
         return None
     return (net_flow * 100) / abs(rate_of_change_percent)
 
 def calculate_all_methods(params):
-    """
-    Determines which calculation methods can be applied based on available inputs.
-    It will:
-      - Infer missing capacity when possible.
-      - Compute retention times using net flow, single flow, rate-of-change (%),
-        and geometric (level drop) methods.
-    Returns a list of dictionaries with the results.
-    """
     results = []
-    # Convert flow units to m³/s if provided.
     inlet_flow_m3s = (params.get("inlet_flow_value") * flow_conversion[params.get("inlet_flow_unit")]
                       if params.get("inlet_flow_value") else None)
     outlet_flow_m3s = (params.get("outlet_flow_value") * flow_conversion[params.get("outlet_flow_unit")]
                        if params.get("outlet_flow_value") else None)
     
     capacity = params.get("capacity")
-    
-    # --- Capacity Inference ---
-    # If capacity is missing but we have enough geometric data, try inferring it.
     if capacity is None and params.get("current_level_m") and params.get("surface_area") and params.get("current_level_percent"):
         inferred_cap = infer_capacity(params["current_level_m"], params["surface_area"], params["current_level_percent"])
         if inferred_cap:
             results.append({
                 "Method": "Inferred Capacity", 
-                "Inference": f"Capacity inferred as {inferred_cap:.2f} m³ using current level (m), surface area (m²) and % full."
+                "Inference": f"Capacity inferred as {inferred_cap:.2f} m³ using current level, surface area, and % full."
             })
             capacity = inferred_cap
 
-    # --- Method 1: Net Flow Retention ---
     if inlet_flow_m3s is not None and outlet_flow_m3s is not None and capacity:
         result = calculate_net_flow_retention(capacity, inlet_flow_m3s, outlet_flow_m3s)
         if result:
             results.append(result)
-    # If capacity is missing, but both flows and rate-of-change (%) exist, attempt an alternative capacity inference.
     elif capacity is None and inlet_flow_m3s is not None and outlet_flow_m3s is not None and params.get("rate_of_change_percent"):
         inferred_cap = infer_capacity_from_net_flow(params["rate_of_change_percent"], inlet_flow_m3s, outlet_flow_m3s)
         if inferred_cap:
@@ -160,7 +112,6 @@ def calculate_all_methods(params):
             if result:
                 results.append(result)
                 
-    # --- Method 2: Single Flow Retention ---
     if capacity:
         if inlet_flow_m3s is not None and outlet_flow_m3s is None:
             result = calculate_flow_based_retention_single(capacity, inlet_flow_m3s, "Inlet Flow")
@@ -171,16 +122,12 @@ def calculate_all_methods(params):
             if result:
                 results.append(result)
     
-    # --- Method 3: Rate-of-change Based (Percentage) ---
-    # If current_level_percent is missing, assume full tank (100%) for this method.
     if params.get("rate_of_change_percent") is not None:
         current_pct = params.get("current_level_percent") if params.get("current_level_percent") is not None else 100
         result = calculate_rate_based_retention(current_pct, params["rate_of_change_percent"])
         if result:
             results.append(result)
     
-    # --- Method 4: Geometric (Level Drop) ---
-    # This method needs only current level in m and rate-of-change in m/hr.
     if params.get("current_level_m") is not None and params.get("rate_of_change_mph") is not None:
         result = calculate_geometric_retention_simple(params["current_level_m"], params["rate_of_change_mph"])
         if result:
@@ -188,17 +135,24 @@ def calculate_all_methods(params):
     
     return results
 
-# ---------------------------
-# Streamlit App UI
+# --- Load the Random Forest Model from the specified path ---
+@st.cache(allow_output_mutation=True)
+def load_rf_model():
+    model_path = "models/train_rf_model.pkl.py"
+    if os.path.exists(model_path):
+        return joblib.load(model_path)
+    else:
+        return None
+
+rf_model = load_rf_model()
 
 st.title("Reservoir Retention Time Calculator")
 
 st.markdown("""
-Enter the reservoir data below. The app will:
-- Infer missing values (for example, capacity) when possible.
-- Calculate retention time using multiple methods and input combinations.
-- Use assumptions (e.g. assume full tank if current level % is missing) where appropriate.
-- Provide an accuracy score and notes for each method.
+Enter the reservoir data below. The app will attempt to:
+- Use established physical relationships to compute retention times.
+- Leverage a trained Random Forest model (if available) to predict retention time.
+- Compare model predictions with rule-based calculations.
 """)
 
 with st.form(key="reservoir_form"):
@@ -238,7 +192,6 @@ with st.form(key="reservoir_form"):
     submitted = st.form_submit_button("Calculate Retention Time")
 
 if submitted:
-    # Build parameters dictionary (0 values converted to None for optional data)
     params = {
         "inlet_flow_value": inlet_flow_value if inlet_flow_value > 0 else None,
         "inlet_flow_unit": inlet_flow_unit,
@@ -253,24 +206,49 @@ if submitted:
         "min_draw_down_level": min_draw_down_level if min_draw_down_level > 0 else None
     }
     
-    # Compute all possible retention time estimates
-    results = calculate_all_methods(params)
+    # Rule-based calculations
+    rule_based_results = calculate_all_methods(params)
     
-    # Check if any method produced a retention time
-    if not results or all(r.get("Retention Time (hours)") is None for r in results):
+    st.subheader(f"Retention Time Estimates for {reservoir_name}")
+    results_list = []
+    
+    if rule_based_results and not all(r.get("Retention Time (hours)") is None for r in rule_based_results):
+        results_list.extend(rule_based_results)
+    
+    # Random Forest Model Prediction
+    feature_vector = [
+        params.get("inlet_flow_value") or 0,
+        params.get("outlet_flow_value") or 0,
+        params.get("capacity") or 0,
+        params.get("current_level_m") or 0,
+        params.get("rate_of_change_percent") or 0,
+        params.get("rate_of_change_mph") or 0,
+        params.get("surface_area") or 0,
+        params.get("current_level_percent") or 100
+    ]
+    
+    if rf_model is not None:
+        pred = rf_model.predict([feature_vector])[0]
+        results_list.append({
+            "Method": "Random Forest Prediction", 
+            "Retention Time (hours)": pred, 
+            "Accuracy (%)": "N/A",
+            "Note": "Model prediction based on training data."
+        })
+    else:
+        st.info("Random Forest model not found. Only rule-based calculations will be used.")
+    
+    if not results_list or all(r.get("Retention Time (hours)") is None for r in results_list):
         st.error("Insufficient or inconsistent data to calculate retention time. Please review your inputs.")
     else:
-        st.subheader(f"Retention Time Estimates for {reservoir_name}")
-        df = pd.DataFrame(results)
-        st.dataframe(df)
+        df_results = pd.DataFrame(results_list)
+        st.dataframe(df_results)
         
-        # Display a warning if the current water level is below the minimum draw down level.
         if params.get("min_draw_down_level") and params.get("current_level_m"):
             if params["current_level_m"] < params["min_draw_down_level"]:
                 st.warning("Warning: Current water level is below the Minimum Draw Down Level!")
         
         st.markdown("""
-        **Note:** Calculations are based on provided data. Inferred values and assumptions are used where data is missing.
-        Accuracy percentages indicate relative confidence in each method.
+        **Note:** Rule-based calculations use established physical equations with inferred values where necessary.
+        The Random Forest model (if available) provides a prediction based on historical or synthetic training data.
         """)
-
