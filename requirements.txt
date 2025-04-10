@@ -3,3 +3,4 @@ pandas
 xlsxwriter
 matplotlib
 joblib
+scikit-learn
