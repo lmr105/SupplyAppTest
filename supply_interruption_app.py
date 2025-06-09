@@ -445,7 +445,7 @@ if run_analysis_clicked:
             # Shift lost and regained supply times by 1 hour
             results_df['Lost Supply'] = results_df['Lost Supply'] + timedelta(hours=1)
             results_df['Regained Supply'] = results_df['Regained Supply'].apply(lambda x: x + timedelta(hours=1) if isinstance(x, datetime) else x)
-        raw_excel = generate_excel_file(results_df)(results_df)
+        raw_excel = generate_excel_file(results_df)
         st.download_button(
             label="Download Raw Data as Excel (.xlsx)",
             data=raw_excel,
@@ -460,7 +460,7 @@ if run_analysis_clicked:
             if apply_bst:
                 processed_df['Lost Supply'] = processed_df['Lost Supply'] + timedelta(hours=1)
                 processed_df['Regained Supply'] = processed_df['Regained Supply'] + timedelta(hours=1)
-            processed_excel_data = generate_processed_excel_file(processed_df)(processed_df)
+            processed_excel_data = generate_processed_excel_file(processed_df)
             st.download_button(
                 label="Download Processed Data as Excel (.xlsx)",
                 data=processed_excel_data,
