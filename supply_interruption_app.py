@@ -363,8 +363,8 @@ additional_headloss = st.number_input("Simulate additional headloss (in meters):
 col_buttons = st.columns(2)
 with col_buttons[0]:
     run_analysis_clicked = st.button("Run Analysis")
-#with col_buttons[1]:
-   #quick_table_clicked = st.button("Quick Table")
+with col_buttons[1]:
+    quick_table_clicked = st.button("Quick Table")
 
 if run_analysis_clicked:
     if pressure_timestamps_text and pressure_readings_text and property_heights_text:
