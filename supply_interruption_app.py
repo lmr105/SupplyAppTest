@@ -333,6 +333,10 @@ def compute_quick_table(pressure_df, logger_height, additional_headloss, unique_
 # --------------------
 # Main UI & Processing (Review Mode)
 # --------------------
+# BST Toggle: apply 1-hour shift to output times
+apply_bst = st.checkbox("Apply BST Adjustment (GMT+1)", value=False)
+
+# --------------------
 st.markdown("## Quick Reactive Overview")
 st.markdown("""
 **Instructions:**
@@ -436,7 +440,12 @@ if run_analysis_clicked:
         results_df = pd.DataFrame(result_rows)
         # Format the Outage Duration as string.
         results_df['Outage Duration'] = results_df['Outage Duration'].apply(lambda x: format_timedelta(x) if pd.notnull(x) and isinstance(x, timedelta) else x)
-        raw_excel = generate_excel_file(results_df)
+        # Apply BST adjustment if selected
+        if apply_bst:
+            # Shift lost and regained supply times by 1 hour
+            results_df['Lost Supply'] = results_df['Lost Supply'] + timedelta(hours=1)
+            results_df['Regained Supply'] = results_df['Regained Supply'].apply(lambda x: x + timedelta(hours=1) if isinstance(x, datetime) else x)
+        raw_excel = generate_excel_file(results_df)(results_df)
         st.download_button(
             label="Download Raw Data as Excel (.xlsx)",
             data=raw_excel,
@@ -447,7 +456,11 @@ if run_analysis_clicked:
         if processed_events:
             processed_df = pd.DataFrame(processed_events)
             processed_df = processed_df.sort_values(by="Property Height (m)", ascending=False)
-            processed_excel_data = generate_processed_excel_file(processed_df)
+            # Apply BST adjustment if selected
+            if apply_bst:
+                processed_df['Lost Supply'] = processed_df['Lost Supply'] + timedelta(hours=1)
+                processed_df['Regained Supply'] = processed_df['Regained Supply'] + timedelta(hours=1)
+            processed_excel_data = generate_processed_excel_file(processed_df)(processed_df)
             st.download_button(
                 label="Download Processed Data as Excel (.xlsx)",
                 data=processed_excel_data,
