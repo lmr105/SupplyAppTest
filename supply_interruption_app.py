@@ -336,7 +336,6 @@ def compute_quick_table(pressure_df, logger_height, additional_headloss, unique_
 # --------------------
 # Main UI & Processing (Review Mode)
 # --------------------
-# BST Toggle: apply 1-hour shift to output times
 apply_bst = st.checkbox("Apply BST Adjustment (GMT+1)", value=False)
 
 # --------------------
@@ -365,6 +364,10 @@ with col3:
 
 logger_height = st.number_input("Enter the height of the pressure logger (in meters):", min_value=0.0, value=100.0)
 additional_headloss = st.number_input("Simulate additional headloss (in meters):", min_value=0.0, value=0.0, step=0.1)
+
+# BST Toggle: apply 1-hour shift to output times
+apply_bst = st.checkbox("Apply BST Adjustment (GMT+1)", value=False)
+:", min_value=0.0, value=0.0, step=0.1)
 
 # Buttons placed side by side.
 col_buttons = st.columns(2)
