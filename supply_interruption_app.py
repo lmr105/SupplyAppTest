@@ -115,25 +115,25 @@ def generate_excel_file(results_df):
     df_excel = df_excel.drop(columns=["Raw Duration"])
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        processed_df.to_excel(writer, index=False, sheet_name='Processed Results')
+        # Write raw results
+        df_excel.to_excel(writer, index=False, sheet_name='Results')
         workbook = writer.book
-        worksheet = writer.sheets['Processed Results']
-        num_rows = processed_df.shape[0] + 1
-        # Sum CML Impact.
-        cml_col_index = processed_df.columns.get_loc("CML Impact")
-        cml_col_letter = xl_col_to_name(cml_col_index)
-        worksheet.write(num_rows, 0, "Total Impact")
-        sum_range_cml = f"{cml_col_letter}2:{cml_col_letter}{num_rows}"
-        worksheet.write_formula(num_rows, cml_col_index, f"=SUM({sum_range_cml})")
-        # Sum Cost.
-        cost_col_index = processed_df.columns.get_loc("Cost")
-        cost_col_letter = xl_col_to_name(cost_col_index)
-        worksheet.write(num_rows, cost_col_index, "Total Cost")
-        sum_range_cost = f"{cost_col_letter}2:{cost_col_letter}{num_rows}"
-        worksheet.write_formula(num_rows, cost_col_index, f"=SUM({sum_range_cost})")
-        # Format Cost column to two decimal places
-        cost_format = workbook.add_format({'num_format': '0.00'})
-        worksheet.set_column(cost_col_index, cost_col_index, None, cost_format)
+        worksheet = writer.sheets['Results']
+        num_rows = df_excel.shape[0] + 1
+        num_cols = df_excel.shape[1]
+        raw_col_index = df_excel.columns.get_loc("Raw Duration (seconds)")
+        # Hide the Raw Duration (seconds) column
+        worksheet.set_column(raw_col_index, raw_col_index, None, None, {'hidden': True})
+        # Apply conditional highlighting for outages >= 3 hours
+        highlight_format = workbook.add_format({'bg_color': '#FFFF00'})
+        raw_col_letter = xl_col_to_name(raw_col_index)
+        visible_range = f"A2:{xl_col_to_name(num_cols - 1)}{num_rows}"
+        formula = f"=${raw_col_letter}2>=10800"
+        worksheet.conditional_format(visible_range, {
+            'type': 'formula',
+            'criteria': formula,
+            'format': highlight_format
+        })
     return output.getvalue()
 
 def generate_processed_excel_file(processed_df):
