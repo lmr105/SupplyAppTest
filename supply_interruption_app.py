@@ -143,9 +143,9 @@ def generate_processed_excel_file(processed_df):
     """
     def calc_cml(row):
         hours = row['Outage Duration (raw)'].total_seconds() / 3600
-        return ((hours * row['Total Properties']) / 1473786) * 60
+        return ((hours * row['Total Properties']) / 1480502) * 60
     processed_df['CML Impact'] = processed_df.apply(lambda row: calc_cml(row) if pd.notnull(row['Outage Duration (raw)']) else 0, axis=1)
-    processed_df['Cost'] = processed_df['CML Impact'] * 61000
+    processed_df['Cost'] = (processed_df['CML Impact'] * 660000).round(2)
     processed_df['Outage Duration'] = processed_df['Outage Duration (raw)'].apply(
         lambda x: format_timedelta(x) if pd.notnull(x) and isinstance(x, timedelta) else "")
     processed_df = processed_df.drop(columns=["Outage Duration (raw)"])
