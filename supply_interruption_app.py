@@ -472,40 +472,41 @@ if run_analysis_clicked:
     else:
         st.error("Please provide data in all text areas.")
 
-if quick_table_clicked:
-    if pressure_timestamps_text and pressure_readings_text and property_heights_text:
-        timestamps_list = [line.strip() for line in pressure_timestamps_text.splitlines() if line.strip()]
-        pressure_list = [line.strip() for line in pressure_readings_text.splitlines() if line.strip()]
-        heights_list = [line.strip() for line in property_heights_text.splitlines() if line.strip()]
-        try:
-            pressure_df = pd.DataFrame({
-                'Datetime': [pd.to_datetime(ts, format="%d/%m/%Y %H:%M") for ts in timestamps_list],
-                'Pressure': [float(p) for p in pressure_list]
-            })
-        except Exception as e:
-            st.error(f"Error parsing pressure data: {e}")
-            st.stop()
-        try:
-            heights_df = pd.DataFrame({
-                'Property_Height': [float(h) for h in heights_list]
-            })
-        except Exception as e:
-            st.error(f"Error parsing property heights: {e}")
-            st.stop()
-
-        pressure_df['Modified_Pressure'] = pressure_df['Pressure'] - additional_headloss
-        pressure_df['Effective_Supply_Head'] = logger_height + (pressure_df['Modified_Pressure'] - 3)
-        grouped = heights_df.groupby('Property_Height').size().reset_index(name='Total Properties')
-        total_props = dict(zip(grouped['Property_Height'], grouped['Total Properties']))
-        unique_heights = sorted(heights_df['Property_Height'].unique())
-        
-        quick_df = compute_quick_table(pressure_df, logger_height, additional_headloss, unique_heights, total_props)
-        st.markdown("### Quick Supply Status Table")
-        st.dataframe(quick_df)
-        total_impact = quick_df['CML Impact'].sum()
-        st.markdown(f"**Total Impact: {total_impact:.6f}**")
-        total_duration_hours = (pressure_df['Datetime'].iloc[-1] - pressure_df['Datetime'].iloc[0]).total_seconds() / 3600
-        cml_hr = total_impact / total_duration_hours if total_duration_hours > 0 else 0
-        st.markdown(f"**CML/hr: {cml_hr:.6f}**")
-    else:
-        st.error("Please provide data in all text areas.")
+# Quick Table is currently disabled
+# if quick_table_clicked:
+#     if pressure_timestamps_text and pressure_readings_text and property_heights_text:
+#         timestamps_list = [line.strip() for line in pressure_timestamps_text.splitlines() if line.strip()]
+#         pressure_list = [line.strip() for line in pressure_readings_text.splitlines() if line.strip()]
+#         heights_list = [line.strip() for line in property_heights_text.splitlines() if line.strip()]
+#         try:
+#             pressure_df = pd.DataFrame({
+#                 'Datetime': [pd.to_datetime(ts, format="%d/%m/%Y %H:%M") for ts in timestamps_list],
+#                 'Pressure': [float(p) for p in pressure_list]
+#             })
+#         except Exception as e:
+#             st.error(f"Error parsing pressure data: {e}")
+#             st.stop()
+#         try:
+#             heights_df = pd.DataFrame({
+#                 'Property_Height': [float(h) for h in heights_list]
+#             })
+#         except Exception as e:
+#             st.error(f"Error parsing property heights: {e}")
+#             st.stop()
+#
+#         pressure_df['Modified_Pressure'] = pressure_df['Pressure'] - additional_headloss
+#         pressure_df['Effective_Supply_Head'] = logger_height + (pressure_df['Modified_Pressure'] - 3)
+#         grouped = heights_df.groupby('Property_Height').size().reset_index(name='Total Properties')
+#         total_props = dict(zip(grouped['Property_Height'], grouped['Total Properties']))
+#         unique_heights = sorted(heights_df['Property_Height'].unique())
+#         
+#         quick_df = compute_quick_table(pressure_df, logger_height, additional_headloss, unique_heights, total_props)
+#         st.markdown("### Quick Supply Status Table")
+#         st.dataframe(quick_df)
+#         total_impact = quick_df['CML Impact'].sum()
+#         st.markdown(f"**Total Impact: {total_impact:.6f}**")
+#         total_duration_hours = (pressure_df['Datetime'].iloc[-1] - pressure_df['Datetime'].iloc[0]).total_seconds() / 3600
+#         cml_hr = total_impact / total_duration_hours if total_duration_hours > 0 else 0
+#         st.markdown(f"**CML/hr: {cml_hr:.6f}**")
+#     else:
+#         st.error("Please provide data in all text areas.")
