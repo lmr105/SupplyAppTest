@@ -336,8 +336,6 @@ def compute_quick_table(pressure_df, logger_height, additional_headloss, unique_
 # --------------------
 # Main UI & Processing (Review Mode)
 # --------------------
-apply_bst = st.checkbox("Apply BST Adjustment (GMT+1)", value=False)
-
 # --------------------
 st.markdown("## Quick Reactive Overview")
 st.markdown("""
@@ -363,7 +361,7 @@ with col3:
     property_heights_text = st.text_area("Property Heights (one per line)", height=150)
 
 logger_height = st.number_input("Enter the height of the pressure logger (in meters):", min_value=0.0, value=100.0)
-additional_headloss = st.number_input("Simulate additional headloss (in meters):", min_value=0.0, value=0.0, step=0.1)
+additional_headloss = st.number_input("Simulate additional headloss (in meters)
 
 # BST Toggle: apply 1-hour shift to output times
 apply_bst = st.checkbox("Apply BST Adjustment (GMT+1)", value=False)
