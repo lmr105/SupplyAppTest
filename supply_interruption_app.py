@@ -367,13 +367,145 @@ additional_headloss = st.number_input("Simulate additional headloss (in meters):
 col_buttons = st.columns(2)
 with col_buttons[0]:
     run_analysis_clicked = st.button("Run Analysis")
-# Quick Table button temporarily disabled
 # with col_buttons[1]:
 #     quick_table_clicked = st.button("Quick Table")
 
-# Quick Table functionality is commented out until further development
-# if quick_table_clicked:
-#     if pressure_timestamps_text and pressure_readings_text and property_heights_text:
-#         ... (Quick Table logic disabled)
-#     else:
-#         st.error("Please provide data in all text areas.")
+if run_analysis_clicked:
+    if pressure_timestamps_text and pressure_readings_text and property_heights_text:
+        timestamps_list = [line.strip() for line in pressure_timestamps_text.splitlines() if line.strip()]
+        pressure_list = [line.strip() for line in pressure_readings_text.splitlines() if line.strip()]
+        heights_list = [line.strip() for line in property_heights_text.splitlines() if line.strip()]
+
+        try:
+            pressure_df = pd.DataFrame({
+                'Datetime': [pd.to_datetime(ts, format="%d/%m/%Y %H:%M") for ts in timestamps_list],
+                'Pressure': [float(p) for p in pressure_list]
+            })
+        except Exception as e:
+            st.error(f"Error parsing pressure data: {e}")
+            st.stop()
+
+        try:
+            heights_df = pd.DataFrame({
+                'Property_Height': [float(h) for h in heights_list]
+            })
+        except Exception as e:
+            st.error(f"Error parsing property heights: {e}")
+            st.stop()
+
+        pressure_df['Modified_Pressure'] = pressure_df['Pressure'] - additional_headloss
+        pressure_df['Effective_Supply_Head'] = logger_height + (pressure_df['Modified_Pressure'] - 3)
+        grouped = heights_df.groupby('Property_Height').size().reset_index(name='Total Properties')
+        total_props = dict(zip(grouped['Property_Height'], grouped['Total Properties']))
+
+        result_rows = []
+        for _, group_row in grouped.iterrows():
+            property_height = group_row['Property_Height']
+            total_properties = group_row['Total Properties']
+            if property_height <= logger_height:
+                supply_status = pressure_df['Modified_Pressure'] > 0
+            else:
+                supply_status = pressure_df['Effective_Supply_Head'] > property_height
+            interruptions = get_supply_interruptions(pressure_df['Datetime'], supply_status)
+            if not interruptions:
+                result_rows.append({
+                    'Property Height (m)': property_height,
+                    'Total Properties': total_properties,
+                    'Lost Supply': "In supply all times",
+                    'Regained Supply': "",
+                    'Outage Duration': "",
+                    'Restoration Duration': "",
+                    'Raw Duration': None
+                })
+            else:
+                for i, intr in enumerate(interruptions):
+                    if intr['duration'] is None:
+                        continue
+                    duration_td = intr['duration']
+                    if i > 0:
+                        restoration_td = intr['lost_time'] - interruptions[i-1]['regained_time']
+                        formatted_restoration = format_timedelta(restoration_td)
+                    else:
+                        formatted_restoration = ""
+                    result_rows.append({
+                        'Property Height (m)': property_height,
+                        'Total Properties': total_properties,
+                        'Lost Supply': intr['lost_time'],
+                        'Regained Supply': intr['regained_time'],
+                        'Outage Duration': duration_td,
+                        'Restoration Duration': formatted_restoration,
+                        'Raw Duration': duration_td
+                    })
+
+        results_df = pd.DataFrame(result_rows)
+        # Format the Outage Duration as string.
+        results_df['Outage Duration'] = results_df['Outage Duration'].apply(lambda x: format_timedelta(x) if pd.notnull(x) and isinstance(x, timedelta) else x)
+        # Apply BST adjustment if selected
+        if apply_bst:
+            # Shift lost and regained supply times by 1 hour
+            results_df['Lost Supply'] = results_df['Lost Supply'] + timedelta(hours=1)
+            results_df['Regained Supply'] = results_df['Regained Supply'].apply(lambda x: x + timedelta(hours=1) if isinstance(x, datetime) else x)
+        raw_excel = generate_excel_file(results_df)
+        st.download_button(
+            label="Download Raw Data as Excel (.xlsx)",
+            data=raw_excel,
+            file_name="raw_results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        processed_events = process_outages(result_rows)
+        if processed_events:
+            processed_df = pd.DataFrame(processed_events)
+            processed_df = processed_df.sort_values(by="Property Height (m)", ascending=False)
+            # Apply BST adjustment if selected
+            if apply_bst:
+                processed_df['Lost Supply'] = processed_df['Lost Supply'] + timedelta(hours=1)
+                processed_df['Regained Supply'] = processed_df['Regained Supply'] + timedelta(hours=1)
+            processed_excel_data = generate_processed_excel_file(processed_df)
+            st.download_button(
+                label="Download Processed Data as Excel (.xlsx)",
+                data=processed_excel_data,
+                file_name="processed_results.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.info("No processed outage events meet the criteria for being truly out of supply.")
+    else:
+        st.error("Please provide data in all text areas.")
+
+if quick_table_clicked:
+    if pressure_timestamps_text and pressure_readings_text and property_heights_text:
+        timestamps_list = [line.strip() for line in pressure_timestamps_text.splitlines() if line.strip()]
+        pressure_list = [line.strip() for line in pressure_readings_text.splitlines() if line.strip()]
+        heights_list = [line.strip() for line in property_heights_text.splitlines() if line.strip()]
+        try:
+            pressure_df = pd.DataFrame({
+                'Datetime': [pd.to_datetime(ts, format="%d/%m/%Y %H:%M") for ts in timestamps_list],
+                'Pressure': [float(p) for p in pressure_list]
+            })
+        except Exception as e:
+            st.error(f"Error parsing pressure data: {e}")
+            st.stop()
+        try:
+            heights_df = pd.DataFrame({
+                'Property_Height': [float(h) for h in heights_list]
+            })
+        except Exception as e:
+            st.error(f"Error parsing property heights: {e}")
+            st.stop()
+
+        pressure_df['Modified_Pressure'] = pressure_df['Pressure'] - additional_headloss
+        pressure_df['Effective_Supply_Head'] = logger_height + (pressure_df['Modified_Pressure'] - 3)
+        grouped = heights_df.groupby('Property_Height').size().reset_index(name='Total Properties')
+        total_props = dict(zip(grouped['Property_Height'], grouped['Total Properties']))
+        unique_heights = sorted(heights_df['Property_Height'].unique())
+        
+        quick_df = compute_quick_table(pressure_df, logger_height, additional_headloss, unique_heights, total_props)
+        st.markdown("### Quick Supply Status Table")
+        st.dataframe(quick_df)
+        total_impact = quick_df['CML Impact'].sum()
+        st.markdown(f"**Total Impact: {total_impact:.6f}**")
+        total_duration_hours = (pressure_df['Datetime'].iloc[-1] - pressure_df['Datetime'].iloc[0]).total_seconds() / 3600
+        cml_hr = total_impact / total_duration_hours if total_duration_hours > 0 else 0
+        st.markdown(f"**CML/hr: {cml_hr:.6f}**")
+    else:
+        st.error("Please provide data in all text areas.")
