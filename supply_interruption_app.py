@@ -38,7 +38,7 @@ st.markdown(
 # Display Centered Logo
 # --------------------
 st.markdown(
-    "<div style='text-align: center;'><img src='https://via.placeholder.com/800x150.png?text=Water+Supply+Interruption+Calculator' width='400'></div>",
+    "<div style='text-align: center;'><img src='https://www.dwrcymru.com/-/media/project/images/brand/logo/dcww-logo-colour-x2.ashx?h=36&w=140&la=en&hash=1FC5F218FEA70D80F68EA05374493D16' width='400'></div>",
     unsafe_allow_html=True
 )
 
@@ -337,7 +337,7 @@ def compute_quick_table(pressure_df, logger_height, additional_headloss, unique_
 # Main UI & Processing (Review Mode)
 # --------------------
 # --------------------
-st.markdown("## Quick Reactive Overview")
+st.markdown("## Supply Interruption Analysis")
 st.markdown("""
 **Instructions:**
 
@@ -348,8 +348,9 @@ st.markdown("""
 2. **Property Heights:**
    - Copy the column of property heights and paste it into the **Property Heights** box.
 3. Enter the height of the pressure logger.
-4. Enter the simulated additional headloss (in meters) to deduct from the pressure readings.
-5. Click **Run Analysis** for full downloadable results or **Quick Table** for a quick reactive overview.
+4. If required, enter the simulated additional headloss (in meters) to deduct from the pressure readings.
+5. If required, toggle **'Apply BST Adjustment'** to add an hour to timestamps during BST. 
+6. Click **Run Analysis**.
 """)
 
 col1, col2, col3 = st.columns(3)
