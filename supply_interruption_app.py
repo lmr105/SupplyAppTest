@@ -365,8 +365,6 @@ additional_headloss = st.number_input("Simulate additional headloss (in meters):
 
 # BST Toggle: apply 1-hour shift to output times
 apply_bst = st.checkbox("Apply BST Adjustment (GMT+1)", value=False)
-("Apply BST Adjustment (GMT+1)", value=False)
-:", min_value=0.0, value=0.0, step=0.1)
 
 # Buttons placed side by side.
 col_buttons = st.columns(2)
