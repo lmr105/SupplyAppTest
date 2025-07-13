@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
 
-# Reservoir Database (Prototype example)
+# --- Reservoir Data ---
 srv_data = {
     "Coed Talog": {
         "volume_per_meter": 281,
@@ -11,9 +12,10 @@ srv_data = {
     }
 }
 
+# --- App Title ---
 st.title("🚰 SRV Retention Time Calculator")
 
-# Reservoir Selection
+# --- Select Reservoir ---
 selected_srv = st.selectbox("Select Reservoir", options=list(srv_data.keys()))
 srv_info = srv_data[selected_srv]
 
@@ -21,54 +23,78 @@ st.subheader("Reservoir Information")
 st.write(f"**Volume per Meter Depth:** {srv_info['volume_per_meter']} m³/m")
 st.write(f"**Operating Capacity:** {srv_info['operating_capacity']} m³")
 
-# User Input for Current Level
+# --- Current Level Input ---
 current_level = st.number_input("Current Level (m)", min_value=0.0, max_value=10.0, value=0.98, step=0.01)
 current_volume = current_level * srv_info['volume_per_meter']
 st.write(f"**Calculated Current Volume:** {current_volume:.2f} m³")
 
-# Flow Inputs
-st.subheader("Flow Inputs")
+# --- Start Time Input ---
+st.subheader("Calculation Start Time")
+start_time_str = st.text_input("Enter Start Time (HH:MM, 24hr)", value="12:00")
+try:
+    today = pd.Timestamp.now().normalize()
+    start_time = datetime.strptime(start_time_str, "%H:%M")
+    start_datetime = pd.Timestamp(today.year, today.month, today.day, start_time.hour, start_time.minute)
+except:
+    st.error("Please enter a valid start time in HH:MM format.")
+    st.stop()
+
+# --- Flow Data Frequency and Input ---
+st.subheader("Flow Data Input")
+
+freq_options = {
+    "15 minute": "15min",
+    "30 minute": "30min",
+    "60 minute": "60min"
+}
+
 col1, col2 = st.columns(2)
 
 with col1:
-    no_inlet_flow = st.checkbox("No Inlet Flow")
-    inlet_data = "" if no_inlet_flow else st.text_area("Paste Inlet Flow Data (Timestamp, m³/hr)", "2024-07-13 12:00,15\n2024-07-13 12:15,15\n2024-07-13 12:30,15")
+    st.markdown("### Inlet Flow")
+    inlet_freq_label = st.selectbox("Inlet Data Frequency", options=freq_options.keys())
+    inlet_data = st.text_area("Enter Inlet Flow Values (m³/hr)", "15\n15\n15\n15")
 
 with col2:
-    no_outlet_flow = st.checkbox("No Outlet Flow")
-    outlet_data = "" if no_outlet_flow else st.text_area("Paste Outlet Flow Data (Timestamp, m³/hr)", "2024-07-13 12:00,20\n2024-07-13 12:30,18")
+    st.markdown("### Outlet Flow")
+    outlet_freq_label = st.selectbox("Outlet Data Frequency", options=freq_options.keys())
+    outlet_data = st.text_area("Enter Outlet Flow Values (m³/hr)", "20\n18")
 
-# Button to Run Calculation
+# --- Process Flow Data into DataFrames ---
+def generate_flow_df(flow_text, freq_label, start_dt):
+    flow_values = flow_text.strip().splitlines()
+    flow_values = [float(val.strip()) for val in flow_values if val.strip() != ""]
+    freq = freq_options[freq_label]
+    timestamps = pd.date_range(start=start_dt, periods=len(flow_values), freq=freq)
+    return pd.DataFrame({"Flow": flow_values}, index=timestamps)
+
+# --- Calculate Retention ---
 if st.button("Calculate Retention"):
-    time_index = pd.date_range(start=pd.Timestamp.now().round('H'), periods=24, freq='H')
-    df = pd.DataFrame(index=time_index)
+    try:
+        df_inlet = generate_flow_df(inlet_data, inlet_freq_label, start_datetime)
+        df_outlet = generate_flow_df(outlet_data, outlet_freq_label, start_datetime)
+    except Exception as e:
+        st.error(f"Error parsing flow data: {e}")
+        st.stop()
 
-    if no_inlet_flow:
-        df['Inlet Flow'] = 0
-    else:
-        inlet_df = pd.DataFrame([x.split(',') for x in inlet_data.strip().split('\n')], columns=['Time', 'Flow'])
-        inlet_df['Time'] = pd.to_datetime(inlet_df['Time'])
-        inlet_df['Flow'] = inlet_df['Flow'].astype(float)
-        inlet_df = inlet_df.set_index('Time').resample('H').mean().interpolate()
-        df['Inlet Flow'] = inlet_df.reindex(df.index, method='nearest', tolerance=pd.Timedelta('30min')).fillna(0)
+    # Create 24-hour index from start
+    hourly_index = pd.date_range(start=start_datetime.floor("H"), periods=24, freq="H")
+    df = pd.DataFrame(index=hourly_index)
 
-    if no_outlet_flow:
-        df['Outlet Flow'] = 0
-    else:
-        outlet_df = pd.DataFrame([x.split(',') for x in outlet_data.strip().split('\n')], columns=['Time', 'Flow'])
-        outlet_df['Time'] = pd.to_datetime(outlet_df['Time'])
-        outlet_df['Flow'] = outlet_df['Flow'].astype(float)
-        outlet_df = outlet_df.set_index('Time').resample('H').mean().interpolate()
-        df['Outlet Flow'] = outlet_df.reindex(df.index, method='nearest', tolerance=pd.Timedelta('30min')).fillna(0)
+    # Resample and align to hourly resolution
+    df['Inlet Flow'] = df_inlet['Flow'].resample("H").mean().reindex(df.index, method="nearest", tolerance=pd.Timedelta("30min")).fillna(0)
+    df['Outlet Flow'] = df_outlet['Flow'].resample("H").mean().reindex(df.index, method="nearest", tolerance=pd.Timedelta("30min")).fillna(0)
 
+    # Calculate Net Flow, Volume and Level
     df['Net Flow (m³/hr)'] = df['Inlet Flow'] - df['Outlet Flow']
     df['Volume (m³)'] = current_volume + df['Net Flow (m³/hr)'].cumsum()
     df['Level (m)'] = df['Volume (m³)'] / srv_info['volume_per_meter']
 
-    st.subheader("Predicted Reservoir Levels")
-    st.dataframe(df[['Inlet Flow', 'Outlet Flow', 'Level (m)']])
+    # --- Output Table ---
+    st.subheader("Predicted Reservoir Levels (Hourly)")
+    st.dataframe(df[['Inlet Flow', 'Outlet Flow', 'Level (m)']].round(2))
 
-    # Plotting
+    # --- Chart ---
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.plot(df.index, df['Level (m)'], marker='o', label='Reservoir Level (m)')
     ax.axhline(srv_info['operating_capacity'] / srv_info['volume_per_meter'], color='red', linestyle='--', label='Max Capacity')
@@ -79,4 +105,4 @@ if st.button("Calculate Retention"):
     plt.xticks(rotation=45)
     st.pyplot(fig)
 
-    st.success("Calculation complete! PDF export feature coming soon.")
+    st.success("Calculation complete!")
