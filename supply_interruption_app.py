@@ -1,15 +1,13 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from fpdf import FPDF
-import tempfile
-import os
+import plotly.graph_objects as go
 from datetime import datetime
 
 # --- Load SRV Data from CSV ---
 @st.cache_data
 def load_srv_data():
-    df = pd.read_csv("reservoir_data.csv")
+    df = pd.read_csv("reservoir_data.csv")  # Ensure this is in the same repo directory
     return df.set_index("SRV Name").to_dict(orient="index")
 
 srv_data = load_srv_data()
@@ -63,10 +61,10 @@ with col2:
     outlet_freq_label = st.selectbox("Outlet Data Frequency", options=freq_options.keys())
     outlet_data = st.text_area("Enter Outlet Flow Values (m³/hr)", "20\n18")
 
-# --- Helper Function ---
+# --- Helper Function to Generate Timestamped Flow DataFrame ---
 def generate_flow_df(flow_text, freq_label, start_dt):
     flow_values = flow_text.strip().splitlines()
-    flow_values = [float(val.strip()) for val in flow_values if val.strip()]
+    flow_values = [float(val.strip()) for val in flow_values if val.strip() != ""]
     freq = freq_options[freq_label]
     timestamps = pd.date_range(start=start_dt, periods=len(flow_values), freq=freq)
     return pd.DataFrame({"Flow": flow_values}, index=timestamps)
@@ -80,64 +78,93 @@ if st.button("Calculate Retention"):
         st.error(f"Error parsing flow data: {e}")
         st.stop()
 
+    # Create 24-hour index
     hourly_index = pd.date_range(start=start_datetime.floor("H"), periods=24, freq="H")
     df = pd.DataFrame(index=hourly_index)
 
+    # Resample to hourly and align with main index
     df['Inlet Flow'] = df_inlet['Flow'].resample("H").mean().reindex(df.index, method="nearest", tolerance=pd.Timedelta("30min")).fillna(0)
     df['Outlet Flow'] = df_outlet['Flow'].resample("H").mean().reindex(df.index, method="nearest", tolerance=pd.Timedelta("30min")).fillna(0)
 
+    # Calculate retention metrics
     df['Net Flow (m³/hr)'] = df['Inlet Flow'] - df['Outlet Flow']
     df['Volume (m³)'] = current_volume + df['Net Flow (m³/hr)'].cumsum()
     df['Level (m)'] = df['Volume (m³)'] / srv_info['Volume Per Meter']
     df['Level (%)'] = (df['Volume (m³)'] / srv_info['Operating Capacity']) * 100
-    df_trimmed = df[(df['Inlet Flow'] != 0) | (df['Outlet Flow'] != 0)]
 
-    st.session_state['retention_df'] = df_trimmed
-    st.session_state['start_datetime'] = start_datetime
-    st.session_state['current_level'] = current_level
-    st.session_state['selected_srv'] = selected_srv
-    st.session_state['srv_info'] = srv_info
+    # Trim to rows where either inlet or outlet flow is present
+    non_zero_rows = (df['Inlet Flow'] != 0) | (df['Outlet Flow'] != 0)
+    df_trimmed = df[non_zero_rows]
 
-# --- Display if results exist ---
-if 'retention_df' in st.session_state:
-    df_trimmed = st.session_state['retention_df']
-    df_display = df_trimmed[['Inlet Flow', 'Outlet Flow', 'Level (m)', 'Level (%)']].round(2)
-
+    # --- Table Styling Function ---
     def highlight_low_levels(s):
-        drawdown = st.session_state['srv_info']['Minimum Draw Down']
+        drawdown = srv_info['Minimum Draw Down']
         return ['background-color: #ffdddd' if v < drawdown else '' for v in s]
 
     st.subheader("Predicted Reservoir Levels (Hourly)")
-    st.dataframe(df_display.style.apply(highlight_low_levels, subset=['Level (m)']))
+    styled_table = df_trimmed[['Inlet Flow', 'Outlet Flow', 'Level (m)', 'Level (%)']].round(2).style.apply(
+        highlight_low_levels, subset=['Level (m)']
+    )
+    st.dataframe(styled_table)
 
-    # --- PDF Export (Table Only) ---
-    if st.button("Download PDF Report"):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", size=12)
+    # --- Plotly Chart ---
+    fig = go.Figure()
 
-            pdf.set_font("Arial", "B", 16)
-            pdf.cell(0, 10, "SRV Retention Time Report", ln=1, align="C")
-            pdf.set_font("Arial", size=12)
+    # Reservoir level line
+    fig.add_trace(go.Scatter(
+        x=df_trimmed.index,
+        y=df_trimmed['Level (m)'],
+        mode='lines+markers',
+        name='Reservoir Level (m)',
+        line=dict(color='blue', width=3),
+        marker=dict(size=6)
+    ))
 
-            pdf.cell(0, 10, f"Reservoir: {st.session_state['selected_srv']}", ln=1)
-            pdf.cell(0, 10, f"Start Time: {st.session_state['start_datetime'].strftime('%Y-%m-%d %H:%M')}", ln=1)
-            pdf.cell(0, 10, f"Current Level: {st.session_state['current_level']:.2f} m", ln=1)
-            pdf.cell(0, 10, f"Operating Capacity: {srv_info['Operating Capacity']} m³", ln=1)
-            pdf.cell(0, 10, f"Minimum Draw Down Level: {srv_info['Minimum Draw Down']} m", ln=1)
+    # Operating capacity line
+    operating_level = srv_info['Operating Capacity'] / srv_info['Volume Per Meter']
+    fig.add_trace(go.Scatter(
+        x=df_trimmed.index,
+        y=[operating_level] * len(df_trimmed),
+        mode='lines',
+        name='Operating Capacity',
+        line=dict(color='red', dash='dash')
+    ))
 
-            pdf.ln(5)
-            pdf.set_font("Arial", "B", 12)
-            pdf.cell(0, 10, "Summary Table (First 10 Rows)", ln=1)
-            pdf.set_font("Arial", size=10)
-            preview = df_display.head(10)
-            for index, row in preview.iterrows():
-                time_str = index.strftime('%H:%M')
-                line = f"{time_str} | In: {row['Inlet Flow']} | Out: {row['Outlet Flow']} | Level: {row['Level (m)']}m | {row['Level (%)']:.1f}%"
-                pdf.cell(0, 8, line, ln=1)
+    # Minimum Draw Down line
+    min_drawdown = srv_info['Minimum Draw Down']
+    fig.add_trace(go.Scatter(
+        x=df_trimmed.index,
+        y=[min_drawdown] * len(df_trimmed),
+        mode='lines',
+        name='Minimum Draw Down Level',
+        line=dict(color='orange', dash='dot')
+    ))
 
-            pdf_path = os.path.join(tmpdir, "retention_report.pdf")
-            pdf.output(pdf_path)
-            with open(pdf_path, "rb") as f:
-                st.download_button("Download PDF", f, file_name="retention_report.pdf", mime="application/pdf")
+    # Shaded area below drawdown
+    fig.add_shape(
+        type="rect",
+        xref="x",
+        yref="y",
+        x0=df_trimmed.index[0],
+        x1=df_trimmed.index[-1],
+        y0=0,
+        y1=min_drawdown,
+        fillcolor="rgba(255, 200, 200, 0.3)",
+        line=dict(width=0),
+        layer="below"
+    )
+
+    fig.update_layout(
+        title="Reservoir Level Over Time",
+        xaxis_title="Time",
+        yaxis_title="Level (m)",
+        hovermode='x unified',
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=40, r=40, t=40, b=40),
+        height=400,
+        template='plotly_white'
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.success("Calculation complete!")
