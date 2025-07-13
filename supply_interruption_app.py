@@ -4,14 +4,13 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime
 
-# --- Reservoir Data ---
-srv_data = {
-    "Coed Talog": {
-        "volume_per_meter": 281,
-        "operating_capacity": 561,
-        "minimum_draw_down_m": 0.5
-    }
-}
+# --- Load SRV Data from CSV ---
+@st.cache_data
+def load_srv_data():
+    df = pd.read_csv("reservoir_data.csv")  # Ensure this is in the same repo directory
+    return df.set_index("SRV Name").to_dict(orient="index")
+
+srv_data = load_srv_data()
 
 # --- App Title ---
 st.title("🚰 SRV Retention Time Calculator")
@@ -21,13 +20,13 @@ selected_srv = st.selectbox("Select Reservoir", options=list(srv_data.keys()))
 srv_info = srv_data[selected_srv]
 
 st.subheader("Reservoir Information")
-st.write(f"**Volume per Meter Depth:** {srv_info['volume_per_meter']} m³/m")
-st.write(f"**Operating Capacity:** {srv_info['operating_capacity']} m³")
-st.write(f"**Minimum Draw Down Level:** {srv_info['minimum_draw_down_m']} m")
+st.write(f"**Volume per Meter Depth:** {srv_info['Volume Per Meter']} m³/m")
+st.write(f"**Operating Capacity:** {srv_info['Operating Capacity']} m³")
+st.write(f"**Minimum Draw Down Level:** {srv_info['Minimum Draw Down']} m")
 
 # --- Current Level Input ---
 current_level = st.number_input("Current Level (m)", min_value=0.0, max_value=10.0, value=0.98, step=0.01)
-current_volume = current_level * srv_info['volume_per_meter']
+current_volume = current_level * srv_info['Volume Per Meter']
 st.write(f"**Calculated Current Volume:** {current_volume:.2f} m³")
 
 # --- Start Time Input ---
@@ -90,8 +89,8 @@ if st.button("Calculate Retention"):
     # Calculate retention metrics
     df['Net Flow (m³/hr)'] = df['Inlet Flow'] - df['Outlet Flow']
     df['Volume (m³)'] = current_volume + df['Net Flow (m³/hr)'].cumsum()
-    df['Level (m)'] = df['Volume (m³)'] / srv_info['volume_per_meter']
-    df['Level (%)'] = (df['Volume (m³)'] / srv_info['operating_capacity']) * 100
+    df['Level (m)'] = df['Volume (m³)'] / srv_info['Volume Per Meter']
+    df['Level (%)'] = (df['Volume (m³)'] / srv_info['Operating Capacity']) * 100
 
     # Trim to rows where either inlet or outlet flow is present
     non_zero_rows = (df['Inlet Flow'] != 0) | (df['Outlet Flow'] != 0)
@@ -99,7 +98,7 @@ if st.button("Calculate Retention"):
 
     # --- Table Styling Function ---
     def highlight_low_levels(s):
-        drawdown = srv_info['minimum_draw_down_m']
+        drawdown = srv_info['Minimum Draw Down']
         return ['background-color: #ffdddd' if v < drawdown else '' for v in s]
 
     st.subheader("Predicted Reservoir Levels (Hourly)")
@@ -122,7 +121,7 @@ if st.button("Calculate Retention"):
     ))
 
     # Operating capacity line
-    operating_level = srv_info['operating_capacity'] / srv_info['volume_per_meter']
+    operating_level = srv_info['Operating Capacity'] / srv_info['Volume Per Meter']
     fig.add_trace(go.Scatter(
         x=df_trimmed.index,
         y=[operating_level] * len(df_trimmed),
@@ -132,7 +131,7 @@ if st.button("Calculate Retention"):
     ))
 
     # Minimum Draw Down line
-    min_drawdown = srv_info['minimum_draw_down_m']
+    min_drawdown = srv_info['Minimum Draw Down']
     fig.add_trace(go.Scatter(
         x=df_trimmed.index,
         y=[min_drawdown] * len(df_trimmed),
@@ -141,7 +140,7 @@ if st.button("Calculate Retention"):
         line=dict(color='orange', dash='dot')
     ))
 
-    # Shaded area below drawdown level
+    # Shaded area below drawdown
     fig.add_shape(
         type="rect",
         xref="x",
