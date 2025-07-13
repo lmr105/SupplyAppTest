@@ -9,6 +9,7 @@ srv_data = {
     "Coed Talog": {
         "volume_per_meter": 281,
         "operating_capacity": 561,
+        "minimum_draw_down_m": 0.5
     }
 }
 
@@ -22,6 +23,7 @@ srv_info = srv_data[selected_srv]
 st.subheader("Reservoir Information")
 st.write(f"**Volume per Meter Depth:** {srv_info['volume_per_meter']} m³/m")
 st.write(f"**Operating Capacity:** {srv_info['operating_capacity']} m³")
+st.write(f"**Minimum Draw Down Level:** {srv_info['minimum_draw_down_m']} m")
 
 # --- Current Level Input ---
 current_level = st.number_input("Current Level (m)", min_value=0.0, max_value=10.0, value=0.98, step=0.01)
@@ -95,11 +97,18 @@ if st.button("Calculate Retention"):
     non_zero_rows = (df['Inlet Flow'] != 0) | (df['Outlet Flow'] != 0)
     df_trimmed = df[non_zero_rows]
 
-    # --- Output Table ---
-    st.subheader("Predicted Reservoir Levels (Hourly)")
-    st.dataframe(df_trimmed[['Inlet Flow', 'Outlet Flow', 'Level (m)', 'Level (%)']].round(2))
+    # --- Table Styling Function ---
+    def highlight_low_levels(s):
+        drawdown = srv_info['minimum_draw_down_m']
+        return ['background-color: #ffdddd' if v < drawdown else '' for v in s]
 
-    # --- Interactive Plotly Chart ---
+    st.subheader("Predicted Reservoir Levels (Hourly)")
+    styled_table = df_trimmed[['Inlet Flow', 'Outlet Flow', 'Level (m)', 'Level (%)']].round(2).style.apply(
+        highlight_low_levels, subset=['Level (m)']
+    )
+    st.dataframe(styled_table)
+
+    # --- Plotly Chart ---
     fig = go.Figure()
 
     # Reservoir level line
@@ -112,15 +121,39 @@ if st.button("Calculate Retention"):
         marker=dict(size=6)
     ))
 
-    # Max capacity line
-    max_level = srv_info['operating_capacity'] / srv_info['volume_per_meter']
+    # Operating capacity line
+    operating_level = srv_info['operating_capacity'] / srv_info['volume_per_meter']
     fig.add_trace(go.Scatter(
         x=df_trimmed.index,
-        y=[max_level] * len(df_trimmed),
+        y=[operating_level] * len(df_trimmed),
         mode='lines',
-        name='Max Capacity',
+        name='Operating Capacity',
         line=dict(color='red', dash='dash')
     ))
+
+    # Minimum Draw Down line
+    min_drawdown = srv_info['minimum_draw_down_m']
+    fig.add_trace(go.Scatter(
+        x=df_trimmed.index,
+        y=[min_drawdown] * len(df_trimmed),
+        mode='lines',
+        name='Minimum Draw Down Level',
+        line=dict(color='orange', dash='dot')
+    ))
+
+    # Shaded area below drawdown level
+    fig.add_shape(
+        type="rect",
+        xref="x",
+        yref="y",
+        x0=df_trimmed.index[0],
+        x1=df_trimmed.index[-1],
+        y0=0,
+        y1=min_drawdown,
+        fillcolor="rgba(255, 200, 200, 0.3)",
+        line=dict(width=0),
+        layer="below"
+    )
 
     fig.update_layout(
         title="Reservoir Level Over Time",
