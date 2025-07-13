@@ -5,3 +5,5 @@ matplotlib
 joblib
 scikit-learn
 plotly
+kaleido
+fpdf
