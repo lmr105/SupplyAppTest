@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 from datetime import datetime
 
 # --- Reservoir Data ---
@@ -99,15 +99,40 @@ if st.button("Calculate Retention"):
     st.subheader("Predicted Reservoir Levels (Hourly)")
     st.dataframe(df_trimmed[['Inlet Flow', 'Outlet Flow', 'Level (m)', 'Level (%)']].round(2))
 
-    # --- Chart ---
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(df_trimmed.index, df_trimmed['Level (m)'], marker='o', label='Reservoir Level (m)')
-    ax.axhline(srv_info['operating_capacity'] / srv_info['volume_per_meter'], color='red', linestyle='--', label='Max Capacity')
-    ax.set_xlabel("Time")
-    ax.set_ylabel("Reservoir Level (m)")
-    ax.set_title("Reservoir Level Over Time")
-    ax.legend()
-    plt.xticks(rotation=45)
-    st.pyplot(fig)
+    # --- Interactive Plotly Chart ---
+    fig = go.Figure()
+
+    # Reservoir level line
+    fig.add_trace(go.Scatter(
+        x=df_trimmed.index,
+        y=df_trimmed['Level (m)'],
+        mode='lines+markers',
+        name='Reservoir Level (m)',
+        line=dict(color='blue', width=3),
+        marker=dict(size=6)
+    ))
+
+    # Max capacity line
+    max_level = srv_info['operating_capacity'] / srv_info['volume_per_meter']
+    fig.add_trace(go.Scatter(
+        x=df_trimmed.index,
+        y=[max_level] * len(df_trimmed),
+        mode='lines',
+        name='Max Capacity',
+        line=dict(color='red', dash='dash')
+    ))
+
+    fig.update_layout(
+        title="Reservoir Level Over Time",
+        xaxis_title="Time",
+        yaxis_title="Level (m)",
+        hovermode='x unified',
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=40, r=40, t=40, b=40),
+        height=400,
+        template='plotly_white'
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
     st.success("Calculation complete!")
