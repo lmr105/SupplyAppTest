@@ -4,3 +4,4 @@ xlsxwriter
 matplotlib
 joblib
 scikit-learn
+plotly
