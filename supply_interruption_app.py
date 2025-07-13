@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # --- Reservoir Data ---
 srv_data = {
@@ -60,7 +60,7 @@ with col2:
     outlet_freq_label = st.selectbox("Outlet Data Frequency", options=freq_options.keys())
     outlet_data = st.text_area("Enter Outlet Flow Values (m³/hr)", "20\n18")
 
-# --- Process Flow Data into DataFrames ---
+# --- Helper Function to Generate Timestamped Flow DataFrame ---
 def generate_flow_df(flow_text, freq_label, start_dt):
     flow_values = flow_text.strip().splitlines()
     flow_values = [float(val.strip()) for val in flow_values if val.strip() != ""]
@@ -68,7 +68,7 @@ def generate_flow_df(flow_text, freq_label, start_dt):
     timestamps = pd.date_range(start=start_dt, periods=len(flow_values), freq=freq)
     return pd.DataFrame({"Flow": flow_values}, index=timestamps)
 
-# --- Calculate Retention ---
+# --- Run Calculation ---
 if st.button("Calculate Retention"):
     try:
         df_inlet = generate_flow_df(inlet_data, inlet_freq_label, start_datetime)
@@ -77,26 +77,31 @@ if st.button("Calculate Retention"):
         st.error(f"Error parsing flow data: {e}")
         st.stop()
 
-    # Create 24-hour index from start
+    # Create 24-hour index
     hourly_index = pd.date_range(start=start_datetime.floor("H"), periods=24, freq="H")
     df = pd.DataFrame(index=hourly_index)
 
-    # Resample and align to hourly resolution
+    # Resample to hourly and align with main index
     df['Inlet Flow'] = df_inlet['Flow'].resample("H").mean().reindex(df.index, method="nearest", tolerance=pd.Timedelta("30min")).fillna(0)
     df['Outlet Flow'] = df_outlet['Flow'].resample("H").mean().reindex(df.index, method="nearest", tolerance=pd.Timedelta("30min")).fillna(0)
 
-    # Calculate Net Flow, Volume and Level
+    # Calculate retention metrics
     df['Net Flow (m³/hr)'] = df['Inlet Flow'] - df['Outlet Flow']
     df['Volume (m³)'] = current_volume + df['Net Flow (m³/hr)'].cumsum()
     df['Level (m)'] = df['Volume (m³)'] / srv_info['volume_per_meter']
+    df['Level (%)'] = (df['Volume (m³)'] / srv_info['operating_capacity']) * 100
+
+    # Trim to rows where either inlet or outlet flow is present
+    non_zero_rows = (df['Inlet Flow'] != 0) | (df['Outlet Flow'] != 0)
+    df_trimmed = df[non_zero_rows]
 
     # --- Output Table ---
     st.subheader("Predicted Reservoir Levels (Hourly)")
-    st.dataframe(df[['Inlet Flow', 'Outlet Flow', 'Level (m)']].round(2))
+    st.dataframe(df_trimmed[['Inlet Flow', 'Outlet Flow', 'Level (m)', 'Level (%)']].round(2))
 
     # --- Chart ---
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(df.index, df['Level (m)'], marker='o', label='Reservoir Level (m)')
+    ax.plot(df_trimmed.index, df_trimmed['Level (m)'], marker='o', label='Reservoir Level (m)')
     ax.axhline(srv_info['operating_capacity'] / srv_info['volume_per_meter'], color='red', linestyle='--', label='Max Capacity')
     ax.set_xlabel("Time")
     ax.set_ylabel("Reservoir Level (m)")
