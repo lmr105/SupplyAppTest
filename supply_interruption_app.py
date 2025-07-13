@@ -61,6 +61,10 @@ if st.button("Calculate Retention"):
         outlet_df = outlet_df.set_index('Time').resample('H').mean().interpolate()
         df['Outlet Flow'] = outlet_df['Flow']
 
+    df['Net Flow (m³/hr)'] = df['Inlet Flow'] - df['Outlet Flow']
+    df['Volume (m³)'] = current_volume + df['Net Flow (m³/hr)'].cumsum()
+    df['Level (m)'] = df['Volume (m³)'] / srv_info['volume_per_meter']  # ← ADD THIS
+
     st.subheader("Predicted Reservoir Levels")
     st.dataframe(df[['Inlet Flow', 'Outlet Flow', 'Level (m)']])
 
