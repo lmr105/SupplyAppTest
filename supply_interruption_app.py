@@ -1,12 +1,10 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
-import plotly.io as pio
-from datetime import datetime
 from fpdf import FPDF
 import tempfile
 import os
+from datetime import datetime
 
 # --- Load SRV Data from CSV ---
 @st.cache_data
@@ -94,9 +92,7 @@ if st.button("Calculate Retention"):
     df['Level (%)'] = (df['Volume (m³)'] / srv_info['Operating Capacity']) * 100
     df_trimmed = df[(df['Inlet Flow'] != 0) | (df['Outlet Flow'] != 0)]
 
-    # Save to session_state
     st.session_state['retention_df'] = df_trimmed
-    st.session_state['fig_data'] = (df_trimmed.index, df_trimmed['Level (m)'])
     st.session_state['start_datetime'] = start_datetime
     st.session_state['current_level'] = current_level
     st.session_state['selected_srv'] = selected_srv
@@ -114,27 +110,9 @@ if 'retention_df' in st.session_state:
     st.subheader("Predicted Reservoir Levels (Hourly)")
     st.dataframe(df_display.style.apply(highlight_low_levels, subset=['Level (m)']))
 
-    # --- Plot ---
-    x_vals, y_vals = st.session_state['fig_data']
-    srv_info = st.session_state['srv_info']
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x_vals, y=y_vals, mode='lines+markers', name='Reservoir Level (m)', line=dict(color='blue', width=3)))
-    op_level = srv_info['Operating Capacity'] / srv_info['Volume Per Meter']
-    min_drawdown = srv_info['Minimum Draw Down']
-
-    fig.add_trace(go.Scatter(x=x_vals, y=[op_level]*len(x_vals), mode='lines', name='Operating Capacity', line=dict(color='red', dash='dash')))
-    fig.add_trace(go.Scatter(x=x_vals, y=[min_drawdown]*len(x_vals), mode='lines', name='Minimum Draw Down Level', line=dict(color='orange', dash='dot')))
-    fig.add_shape(type="rect", xref="x", yref="y", x0=x_vals[0], x1=x_vals[-1], y0=0, y1=min_drawdown, fillcolor="rgba(255,200,200,0.3)", line=dict(width=0), layer="below")
-    fig.update_layout(title="Reservoir Level Over Time", xaxis_title="Time", yaxis_title="Level (m)", hovermode='x unified', height=400, template='plotly_white')
-    st.plotly_chart(fig, use_container_width=True)
-
-    # --- PDF Export ---
+    # --- PDF Export (Table Only) ---
     if st.button("Download PDF Report"):
         with tempfile.TemporaryDirectory() as tmpdir:
-            chart_path = os.path.join(tmpdir, "chart.png")
-            pio.write_image(fig, chart_path, format="png", width=800, height=400)
-
             pdf = FPDF()
             pdf.add_page()
             pdf.set_font("Arial", size=12)
@@ -150,11 +128,8 @@ if 'retention_df' in st.session_state:
             pdf.cell(0, 10, f"Minimum Draw Down Level: {srv_info['Minimum Draw Down']} m", ln=1)
 
             pdf.ln(5)
-            pdf.image(chart_path, w=180)
-
-            pdf.ln(5)
             pdf.set_font("Arial", "B", 12)
-            pdf.cell(0, 10, "Summary Table (First 10 Hours)", ln=1)
+            pdf.cell(0, 10, "Summary Table (First 10 Rows)", ln=1)
             pdf.set_font("Arial", size=10)
             preview = df_display.head(10)
             for index, row in preview.iterrows():
