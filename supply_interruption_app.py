@@ -50,20 +50,20 @@ if st.button("Calculate Retention"):
         inlet_df['Time'] = pd.to_datetime(inlet_df['Time'])
         inlet_df['Flow'] = inlet_df['Flow'].astype(float)
         inlet_df = inlet_df.set_index('Time').resample('H').mean().interpolate()
-        df['Inlet Flow'] = inlet_df['Flow']
+        df['Inlet Flow'] = inlet_df.reindex(df.index, method='nearest', tolerance=pd.Timedelta('30min')).fillna(0)
 
     if no_outlet_flow:
         df['Outlet Flow'] = 0
     else:
         outlet_df = pd.DataFrame([x.split(',') for x in outlet_data.strip().split('\n')], columns=['Time', 'Flow'])
         outlet_df['Time'] = pd.to_datetime(outlet_df['Time'])
-        outlet_df['Flow'] = outlet_df['Flow'].astype(float)  # Ensure numeric dtype explicitly here
+        outlet_df['Flow'] = outlet_df['Flow'].astype(float)
         outlet_df = outlet_df.set_index('Time').resample('H').mean().interpolate()
-        df['Outlet Flow'] = outlet_df['Flow']
+        df['Outlet Flow'] = outlet_df.reindex(df.index, method='nearest', tolerance=pd.Timedelta('30min')).fillna(0)
 
     df['Net Flow (m³/hr)'] = df['Inlet Flow'] - df['Outlet Flow']
     df['Volume (m³)'] = current_volume + df['Net Flow (m³/hr)'].cumsum()
-    df['Level (m)'] = df['Volume (m³)'] / srv_info['volume_per_meter']  # ← ADD THIS
+    df['Level (m)'] = df['Volume (m³)'] / srv_info['volume_per_meter']
 
     st.subheader("Predicted Reservoir Levels")
     st.dataframe(df[['Inlet Flow', 'Outlet Flow', 'Level (m)']])
