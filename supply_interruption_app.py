@@ -7,7 +7,7 @@ from datetime import datetime
 # --- Load SRV Data from CSV ---
 @st.cache_data
 def load_srv_data():
-    df = pd.read_csv("reservoir_data.csv")  # Ensure this is in the same repo directory
+    df = pd.read_csv("reservoir_data.csv")
     return df.set_index("SRV Name").to_dict(orient="index")
 
 srv_data = load_srv_data()
@@ -15,53 +15,57 @@ srv_data = load_srv_data()
 # --- App Title ---
 st.title("🚰 SRV Retention Time Calculator")
 
-# --- Select Reservoir ---
-selected_srv = st.selectbox("Select Reservoir", options=list(srv_data.keys()))
-srv_info = srv_data[selected_srv]
+# --- Define Two Column Layout ---
+col_input, col_output = st.columns(2)
 
-st.subheader("Reservoir Information")
-st.write(f"**Volume per Meter Depth:** {srv_info['Volume Per Meter']} m³/m")
-st.write(f"**Operating Capacity:** {srv_info['Operating Capacity']} m³")
-st.write(f"**Minimum Draw Down Level:** {srv_info['Minimum Draw Down']} m")
+with col_input:
+    # --- Select Reservoir ---
+    selected_srv = st.selectbox("Select Reservoir", options=list(srv_data.keys()))
+    srv_info = srv_data[selected_srv]
 
-# --- Current Level Input ---
-current_level = st.number_input("Current Level (m)", min_value=0.0, max_value=10.0, value=0.98, step=0.01)
-current_volume = current_level * srv_info['Volume Per Meter']
-st.write(f"**Calculated Current Volume:** {current_volume:.2f} m³")
+    st.subheader("Reservoir Information")
+    st.write(f"**Volume per Meter Depth:** {srv_info['Volume Per Meter']} m³/m")
+    st.write(f"**Operating Capacity:** {srv_info['Operating Capacity']} m³")
+    st.write(f"**Minimum Draw Down Level:** {srv_info['Minimum Draw Down']} m")
 
-# --- Start Time Input ---
-st.subheader("Calculation Start Time")
-start_time_str = st.text_input("Enter Start Time (HH:MM, 24hr)", value="12:00")
-try:
-    today = pd.Timestamp.now().normalize()
-    start_time = datetime.strptime(start_time_str, "%H:%M")
-    start_datetime = pd.Timestamp(today.year, today.month, today.day, start_time.hour, start_time.minute)
-except:
-    st.error("Please enter a valid start time in HH:MM format.")
-    st.stop()
+    # --- Current Level Input ---
+    current_level = st.number_input("Current Level (m)", min_value=0.0, max_value=10.0, value=0.98, step=0.01)
+    current_volume = current_level * srv_info['Volume Per Meter']
+    st.write(f"**Calculated Current Volume:** {current_volume:.2f} m³")
 
-# --- Flow Data Frequency and Input ---
-st.subheader("Flow Data Input")
+    # --- Start Time Input ---
+    st.subheader("Calculation Start Time")
+    start_time_str = st.text_input("Enter Start Time (HH:MM, 24hr)", value="12:00")
+    try:
+        today = pd.Timestamp.now().normalize()
+        start_time = datetime.strptime(start_time_str, "%H:%M")
+        start_datetime = pd.Timestamp(today.year, today.month, today.day, start_time.hour, start_time.minute)
+    except:
+        st.error("Please enter a valid start time in HH:MM format.")
+        st.stop()
 
-freq_options = {
-    "15 minute": "15min",
-    "30 minute": "30min",
-    "60 minute": "60min"
-}
+    # --- Flow Data Frequency and Input ---
+    st.subheader("Flow Data Input")
 
-col1, col2 = st.columns(2)
+    freq_options = {
+        "15 minute": "15min",
+        "30 minute": "30min",
+        "60 minute": "60min"
+    }
 
-with col1:
-    st.markdown("### Inlet Flow")
-    inlet_freq_label = st.selectbox("Inlet Data Frequency", options=freq_options.keys())
-    inlet_data = st.text_area("Enter Inlet Flow Values (m³/hr)", "15\n15\n15\n15")
+    col1, col2 = st.columns(2)
 
-with col2:
-    st.markdown("### Outlet Flow")
-    outlet_freq_label = st.selectbox("Outlet Data Frequency", options=freq_options.keys())
-    outlet_data = st.text_area("Enter Outlet Flow Values (m³/hr)", "20\n18")
+    with col1:
+        st.markdown("### Inlet Flow")
+        inlet_freq_label = st.selectbox("Inlet Data Frequency", options=freq_options.keys(), key="inlet")
+        inlet_data = st.text_area("Enter Inlet Flow Values (m³/hr)", "15\n15\n15\n15")
 
-# --- Helper Function to Generate Timestamped Flow DataFrame ---
+    with col2:
+        st.markdown("### Outlet Flow")
+        outlet_freq_label = st.selectbox("Outlet Data Frequency", options=freq_options.keys(), key="outlet")
+        outlet_data = st.text_area("Enter Outlet Flow Values (m³/hr)", "20\n18")
+
+# --- Helper Function ---
 def generate_flow_df(flow_text, freq_label, start_dt):
     flow_values = flow_text.strip().splitlines()
     flow_values = [float(val.strip()) for val in flow_values if val.strip() != ""]
@@ -70,101 +74,94 @@ def generate_flow_df(flow_text, freq_label, start_dt):
     return pd.DataFrame({"Flow": flow_values}, index=timestamps)
 
 # --- Run Calculation ---
-if st.button("Calculate Retention"):
+if col_input.button("Calculate Retention"):
     try:
         df_inlet = generate_flow_df(inlet_data, inlet_freq_label, start_datetime)
         df_outlet = generate_flow_df(outlet_data, outlet_freq_label, start_datetime)
     except Exception as e:
-        st.error(f"Error parsing flow data: {e}")
+        col_output.error(f"Error parsing flow data: {e}")
         st.stop()
 
-    # Create 24-hour index
     hourly_index = pd.date_range(start=start_datetime.floor("H"), periods=24, freq="H")
     df = pd.DataFrame(index=hourly_index)
 
-    # Resample to hourly and align with main index
     df['Inlet Flow'] = df_inlet['Flow'].resample("H").mean().reindex(df.index, method="nearest", tolerance=pd.Timedelta("30min")).fillna(0)
     df['Outlet Flow'] = df_outlet['Flow'].resample("H").mean().reindex(df.index, method="nearest", tolerance=pd.Timedelta("30min")).fillna(0)
 
-    # Calculate retention metrics
     df['Net Flow (m³/hr)'] = df['Inlet Flow'] - df['Outlet Flow']
     df['Volume (m³)'] = current_volume + df['Net Flow (m³/hr)'].cumsum()
     df['Level (m)'] = df['Volume (m³)'] / srv_info['Volume Per Meter']
     df['Level (%)'] = (df['Volume (m³)'] / srv_info['Operating Capacity']) * 100
 
-    # Trim to rows where either inlet or outlet flow is present
     non_zero_rows = (df['Inlet Flow'] != 0) | (df['Outlet Flow'] != 0)
-    df_trimmed = df[non_zero_rows]
+    df_trimmed = df[non_zero_rows].round(2)
 
-    # --- Table Styling Function ---
+    # --- Table Styling ---
     def highlight_low_levels(s):
         drawdown = srv_info['Minimum Draw Down']
         return ['background-color: #ffdddd' if v < drawdown else '' for v in s]
 
-    st.subheader("Predicted Reservoir Levels (Hourly)")
-    styled_table = df_trimmed[['Inlet Flow', 'Outlet Flow', 'Level (m)', 'Level (%)']].round(2).style.apply(
-        highlight_low_levels, subset=['Level (m)']
-    )
-    st.dataframe(styled_table)
+    with col_output:
+        st.subheader("Predicted Reservoir Levels (Hourly)")
+        styled_table = df_trimmed[['Inlet Flow', 'Outlet Flow', 'Level (m)', 'Level (%)']].style.apply(
+            highlight_low_levels, subset=['Level (m)']
+        )
+        st.dataframe(styled_table)
 
-    # --- Plotly Chart ---
-    fig = go.Figure()
+        # --- Plotly Chart ---
+        fig = go.Figure()
 
-    # Reservoir level line
-    fig.add_trace(go.Scatter(
-        x=df_trimmed.index,
-        y=df_trimmed['Level (m)'],
-        mode='lines+markers',
-        name='Reservoir Level (m)',
-        line=dict(color='blue', width=3),
-        marker=dict(size=6)
-    ))
+        fig.add_trace(go.Scatter(
+            x=df_trimmed.index,
+            y=df_trimmed['Level (m)'],
+            mode='lines+markers',
+            name='Reservoir Level (m)',
+            line=dict(color='blue', width=3),
+            marker=dict(size=6)
+        ))
 
-    # Operating capacity line
-    operating_level = srv_info['Operating Capacity'] / srv_info['Volume Per Meter']
-    fig.add_trace(go.Scatter(
-        x=df_trimmed.index,
-        y=[operating_level] * len(df_trimmed),
-        mode='lines',
-        name='Operating Capacity',
-        line=dict(color='red', dash='dash')
-    ))
+        operating_level = srv_info['Operating Capacity'] / srv_info['Volume Per Meter']
+        min_drawdown = srv_info['Minimum Draw Down']
 
-    # Minimum Draw Down line
-    min_drawdown = srv_info['Minimum Draw Down']
-    fig.add_trace(go.Scatter(
-        x=df_trimmed.index,
-        y=[min_drawdown] * len(df_trimmed),
-        mode='lines',
-        name='Minimum Draw Down Level',
-        line=dict(color='orange', dash='dot')
-    ))
+        fig.add_trace(go.Scatter(
+            x=df_trimmed.index,
+            y=[operating_level] * len(df_trimmed),
+            mode='lines',
+            name='Operating Capacity',
+            line=dict(color='red', dash='dash')
+        ))
 
-    # Shaded area below drawdown
-    fig.add_shape(
-        type="rect",
-        xref="x",
-        yref="y",
-        x0=df_trimmed.index[0],
-        x1=df_trimmed.index[-1],
-        y0=0,
-        y1=min_drawdown,
-        fillcolor="rgba(255, 200, 200, 0.3)",
-        line=dict(width=0),
-        layer="below"
-    )
+        fig.add_trace(go.Scatter(
+            x=df_trimmed.index,
+            y=[min_drawdown] * len(df_trimmed),
+            mode='lines',
+            name='Minimum Draw Down Level',
+            line=dict(color='orange', dash='dot')
+        ))
 
-    fig.update_layout(
-        title="Reservoir Level Over Time",
-        xaxis_title="Time",
-        yaxis_title="Level (m)",
-        hovermode='x unified',
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(l=40, r=40, t=40, b=40),
-        height=400,
-        template='plotly_white'
-    )
+        fig.add_shape(
+            type="rect",
+            xref="x",
+            yref="y",
+            x0=df_trimmed.index[0],
+            x1=df_trimmed.index[-1],
+            y0=0,
+            y1=min_drawdown,
+            fillcolor="rgba(255, 200, 200, 0.3)",
+            line=dict(width=0),
+            layer="below"
+        )
 
-    st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(
+            title="Reservoir Level Over Time",
+            xaxis_title="Time",
+            yaxis_title="Level (m)",
+            hovermode='x unified',
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(l=40, r=40, t=40, b=40),
+            height=400,
+            template='plotly_white'
+        )
 
-    st.success("Calculation complete!")
+        st.plotly_chart(fig, use_container_width=True)
+        st.success("Calculation complete!")
