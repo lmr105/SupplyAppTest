@@ -16,7 +16,7 @@ def load_srv_data():
 srv_data = load_srv_data()
 
 # --- App Title ---
-st.title("🚰 SRV Retention Time Calculator")
+st.title("SRV Retention Calculator")
 
 # --- Select Reservoir ---
 selected_srv = st.selectbox("Select Reservoir", options=list(srv_data.keys()))
