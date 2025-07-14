@@ -31,7 +31,7 @@ def load_srv_data():
 srv_data = load_srv_data()
 
 # --- App Title ---
-st.title("🚰 SRV Retention Time Calculator")
+st.title("SRV Retention Calculator")
 
 # --- Side-by-side layout ---
 col_input, col_output = st.columns(2)
