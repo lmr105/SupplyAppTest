@@ -117,10 +117,10 @@ with col_output:
             return ['background-color: #ffdddd' if v < drawdown else '' for v in s]
 
         st.subheader("Predicted Reservoir Levels (Hourly)")
-        styled_table = df_trimmed[['Inlet Flow', 'Outlet Flow', 'Level (m)', 'Level (%)']].round(2).style.apply(
-            highlight_low_levels, subset=['Level (m)']
-        )
+        df_display = df_trimmed[['Inlet Flow', 'Outlet Flow', 'Level (m)', 'Level (%)']].round(2)
+        styled_table = df_display.style.apply(highlight_low_levels, subset=['Level (m)'])
         st.dataframe(styled_table)
+
 
         # Plot
         fig = go.Figure()
