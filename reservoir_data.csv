@@ -1,4 +1,4 @@
-SRV Name,Volume Per Meter,Operating Capacity,Minimum Draw Down
-Coed Talog,281,561,0.5
-Nant Bryn,320,600,0.6
-Pen Hill,250,500,0.4
+SRV Name,Volume Per Meter,Operating Capacity,Minimum Draw Down,Low Level,Low Low Level
+Coed Talog,281,561,0.5,0.9,0.7
+Nant Bryn,320,600,0.6,1.0,0.8
+Pen Hill,250,500,0.4,0.8,0.6
