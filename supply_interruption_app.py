@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from io import BytesIO
-import xlsxwriter
 from datetime import datetime, timedelta
 
 # ------------------- Helper functions -------------------
@@ -57,22 +56,26 @@ def process_interruptions(df, min_duration=180, merge_gap=60):
 
 st.title("CML Supply Interruption Tool")
 
-uploaded_file = st.file_uploader("Upload pressure logger CSV file", type="csv")
-property_heights_file = st.file_uploader("Upload property heights CSV file", type="csv")
+st.markdown("### Paste Pressure Logger Data (Timestamp, Pressure)")
+pressure_data_text = st.text_area("Paste CSV-formatted pressure data here", height=200)
+
+st.markdown("### Paste Property Heights (Property, Height)")
+property_data_text = st.text_area("Paste CSV-formatted property height data here", height=150)
 
 logger_height = st.number_input("Logger Height (m)", value=0.0)
 additional_headloss = st.number_input("Additional Headloss (m)", value=0.0)
 apply_bst = st.checkbox("Apply BST adjustment")
 
-if uploaded_file and property_heights_file:
-    # Read data
-    df = pd.read_csv(uploaded_file, parse_dates=[0])
-    df.columns = ['Timestamp', 'Pressure']
-    df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+if pressure_data_text and property_data_text:
+    # Read pasted data into DataFrames
+    from io import StringIO
+    pressure_df = pd.read_csv(StringIO(pressure_data_text), parse_dates=[0])
+    pressure_df.columns = ['Timestamp', 'Pressure']
+    pressure_df['Timestamp'] = pd.to_datetime(pressure_df['Timestamp'])
     if apply_bst:
-        df['Timestamp'] = df['Timestamp'] + pd.to_timedelta(1, unit='h')
+        pressure_df['Timestamp'] = pressure_df['Timestamp'] + pd.to_timedelta(1, unit='h')
 
-    property_heights = pd.read_csv(property_heights_file)
+    property_heights = pd.read_csv(StringIO(property_data_text))
     property_heights.columns = ['Property', 'Height']
 
     results = {}
@@ -83,13 +86,12 @@ if uploaded_file and property_heights_file:
         property_height = row['Height']
 
         # --- NEW LOGIC STARTS HERE ---
-        df['Modified_Pressure'] = df['Pressure'] - additional_headloss
-        df['Effective_Supply_Head'] = logger_height + (df['Modified_Pressure'] - 3)
-        # enforce 3m at property for all cases
-        df['In_Supply'] = df['Effective_Supply_Head'] >= property_height
+        pressure_df['Modified_Pressure'] = pressure_df['Pressure'] - additional_headloss
+        pressure_df['Effective_Supply_Head'] = logger_height + (pressure_df['Modified_Pressure'] - 3)
+        pressure_df['In_Supply'] = pressure_df['Effective_Supply_Head'] >= property_height
         # --- NEW LOGIC ENDS HERE ---
 
-        interruptions = get_supply_interruptions(df['In_Supply'].values, df['Timestamp'])
+        interruptions = get_supply_interruptions(pressure_df['In_Supply'].values, pressure_df['Timestamp'])
         results[property_name] = interruptions
 
         if interruptions:
